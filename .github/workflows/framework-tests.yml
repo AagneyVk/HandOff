@@ -14,13 +14,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Compile all host Python
+        run: python -m compileall -q host tests
       - name: Protocol unit tests
         run: python -m unittest discover -s tests -v
       - name: Import host runtime
         run: python -c "from host.shared.dev_host import DevelopmentHost; print('Windows host import OK')"
 
   android-client:
-    name: Android client build
+    name: Android client build / test / lint
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -36,6 +38,8 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+      - name: Compile and run Android JVM tests
+        run: gradle :app:testDebugUnitTest --stacktrace
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
       - name: Run Android lint
