@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://handoff.local/protocol/v0/message.schema.json",
+  "title": "HandOff control message",
+  "type": "object",
+  "required": ["version", "id", "type", "timestamp_us", "payload"],
+  "properties": {
+    "version": { "const": 0 },
+    "id": { "type": "string", "minLength": 1 },
+    "type": {
+      "enum": [
+        "hello",
+        "capabilities",
+        "windows.list",
+        "windows.snapshot",
+        "session.start",
+        "session.started",
+        "session.stop",
+        "stream.config",
+        "input.pointer",
+        "input.scroll",
+        "input.key",
+        "telemetry.latency",
+        "error"
+      ]
+    },
+    "session_id": { "type": ["string", "null"] },
+    "timestamp_us": { "type": "integer", "minimum": 0 },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}
