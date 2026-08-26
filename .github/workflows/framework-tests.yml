@@ -19,7 +19,7 @@ jobs:
       - name: Protocol unit tests
         run: python -m unittest discover -s tests -v
       - name: Import host runtime
-        run: python -c "from host.shared.dev_host import DevelopmentHost; print('Windows host import OK')"
+        run: python -c "import host.shared.dev_host as h; assert callable(h.handle); assert callable(h.main); print('Windows host runtime imports OK')"
 
   android-client:
     name: Android client build / test / lint
@@ -29,11 +29,13 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+      - name: Install required Android SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
