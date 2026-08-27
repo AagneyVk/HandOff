@@ -1,0 +1,35 @@
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+
+# Native builds
+out/
+build/
+cmake-build-*/
+CMakeUserPresets.json
+
+# Rust/C++/tooling
+**/target/
+compile_commands.json
+
+# Python tooling/tests
+__pycache__/
+.pytest_cache/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime artifacts
+*.log
+captures/
+benchmarks/local/
