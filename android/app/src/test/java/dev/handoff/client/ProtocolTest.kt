@@ -5,6 +5,16 @@ import org.junit.Test
 import java.io.*
 
 class ProtocolTest {
+    @Test fun pinTrustAcceptsOnlyExactCertificate() {
+        val certificate = javaClass.getResourceAsStream("/host-certificate.pem")!!.use {
+            java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(it) as java.security.cert.X509Certificate
+        }
+        val pin = java.security.MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
+            .joinToString("") { "%02x".format(it.toInt() and 255) }
+        PinnedTrust(pin).checkServerTrusted(arrayOf(certificate), "EC")
+        try { PinnedTrust("0".repeat(64)).checkServerTrusted(arrayOf(certificate), "EC"); fail("Wrong certificate accepted") }
+        catch (_: java.security.cert.CertificateException) { }
+    }
     @Test fun packetRoundTripAndTruncation() {
         val buffer = ByteArrayOutputStream()
         Wire.write(DataOutputStream(buffer), "hello".toByteArray())

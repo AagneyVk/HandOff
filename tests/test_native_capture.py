@@ -26,6 +26,22 @@ class WindowsCaptureTests(unittest.TestCase):
             self.assertLess(red, 40); self.assertGreater(green, 150); self.assertLess(blue, 110)
             # The visible capture dimensions and the input client dimensions must agree.
             with self.assertRaises(ValueError): tap(selected.id, .5, .5, (1, 1))
+            clicked = []
+            root.bind('<Button-1>', lambda event: clicked.append((event.x, event.y)))
+            root.lift(); root.focus_force(); root.update()
+            user32 = ctypes.windll.user32
+            from ctypes import wintypes
+            user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+            user32.SetForegroundWindow(int(selected.id.split(':')[1]))
+            root.update()
+            tap(selected.id, .5, .5, (320, 240))
+            import time
+            deadline = time.monotonic() + 2
+            while not clicked and time.monotonic() < deadline:
+                root.update(); time.sleep(.01)
+            self.assertTrue(clicked, 'Native input did not reach the captured window')
+            self.assertLess(abs(clicked[0][0] - 160), 3)
+            self.assertLess(abs(clicked[0][1] - 120), 3)
         finally:
             root.destroy()
         with self.assertRaises(ValueError): grab(selected.id, pid)

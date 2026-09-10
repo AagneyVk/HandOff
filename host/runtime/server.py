@@ -145,6 +145,7 @@ class Connection:
             await self.stop()
             await self.send('stopped', message='Returned to your computer')
         elif type_ == 'ack':
+            if not self.session: return
             self.validate_session(msg)
             if type(msg.get('sequence')) is int and msg['sequence'] == self.sequence:
                 self.shown_sequence = self.sequence
