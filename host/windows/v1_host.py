@@ -46,42 +46,17 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
                     await send(writer, "capabilities", {
                         "host_name": host_name(),
                         "platform": "windows",
-                        "capture": ["windows-graphics-capture-planned"],
-                        "input": ["pointer", "scroll"],
+                        "capture": [],
+                        "input": [],
                         "audio": False,
                         "media": [],
                     })
                 elif msg.type == "windows.list":
                     await send(writer, "windows.snapshot", {"windows": snapshot()})
                 elif msg.type == "session.start":
-                    requested = str(msg.payload.get("window_id", ""))
-                    windows = {item["id"]: item for item in snapshot()}
-                    if requested not in windows:
-                        await send(writer, "error", {"code": "unknown_window", "message": "That window is no longer available."})
-                        continue
-                    session_id = uuid.uuid4().hex
-                    selected_window = requested
-                    await send(writer, "session.started", {
-                        "window": windows[requested],
-                        "media_mode": "control-only-v1",
-                        "started_us": monotonic_us(),
-                    }, session_id)
-                elif msg.type == "input.pointer":
-                    if not session_id or msg.session_id != session_id or not selected_window:
-                        raise ProtocolError("pointer input for inactive session")
-                    action = msg.payload.get("action", "tap")
-                    if action != "tap":
-                        raise ProtocolError(f"unsupported pointer action {action!r}")
-                    tap(selected_window, normalized(msg.payload.get("x"), "x"), normalized(msg.payload.get("y"), "y"))
-                    await send(writer, "telemetry.latency", {"kind": "input-ack", "source_message_id": msg.id, "source_timestamp_us": msg.timestamp_us, "host_received_us": monotonic_us()}, session_id)
-                elif msg.type == "input.scroll":
-                    if not session_id or msg.session_id != session_id or not selected_window:
-                        raise ProtocolError("scroll input for inactive session")
-                    # Until the Android content transform sends pointer position with scroll,
-                    # place wheel input at the centre of the selected window.
-                    dy = float(msg.payload.get("dy", 0.0))
-                    scroll(selected_window, .5, .5, dy)
-                    await send(writer, "telemetry.latency", {"kind": "input-ack", "source_message_id": msg.id, "source_timestamp_us": msg.timestamp_us, "host_received_us": monotonic_us()}, session_id)
+                    await send(writer, "error", {"code": "media_unavailable", "message": "Live capture is not implemented in this preview. Remote input is disabled."})
+                elif msg.type in {"input.pointer", "input.scroll", "input.key"}:
+                    raise ProtocolError("Remote input is disabled until authenticated live sessions are implemented")
                 elif msg.type == "session.stop":
                     session_id = None
                     selected_window = None
@@ -90,9 +65,14 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
             except (ProtocolError, ValueError, OSError) as exc:
                 LOG.warning("request from %s failed: %s", peer, exc)
                 await send(writer, "error", {"code": "request_failed", "message": str(exc)}, session_id)
+    except (ConnectionError, ValueError):
+        LOG.info("client connection ended: %s", peer)
     finally:
         writer.close()
-        await writer.wait_closed()
+        try:
+            await writer.wait_closed()
+        except ConnectionError:
+            pass
         LOG.info("client disconnected: %s", peer)
 
 
@@ -109,3 +89,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
+
