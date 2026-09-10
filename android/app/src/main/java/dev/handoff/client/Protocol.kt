@@ -64,13 +64,13 @@ class ProtocolClient(
                 val input = DataInputStream(tls.inputStream)
                 Wire.write(out, auth.put("v", 1).toString().toByteArray(Charsets.UTF_8))
                 val first = readJson(input)
+                synchronized(this) {
+                    if (generation.get() != epoch) return@thread
                 when (first.getString("type")) {
                     "paired" -> store.save(Credentials(host, port, pin, first.getString("device"), first.getString("token")))
                     "ready" -> Unit
                     else -> error(first.optString("message", "Pairing failed"))
                 }
-                synchronized(this) {
-                    if (generation.get() != epoch) return@thread
                     socket = tls; writer = out
                 }
                 tls.soTimeout = 25000

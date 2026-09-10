@@ -179,6 +179,10 @@ class Desktop:
 def main():
     multiprocessing.freeze_support()
     logging.basicConfig(level=logging.INFO)
+    if sys.platform == 'win32':
+        import ctypes
+        with contextlib.suppress(AttributeError, OSError):
+            ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
     root = tk.Tk()
     try: Desktop(root)
     except Exception as exc:

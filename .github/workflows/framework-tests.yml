@@ -52,6 +52,12 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r host/requirements.txt pyinstaller==6.16.0
       - run: python -m PyInstaller --noconfirm --clean --onedir --windowed --name HandOff --paths . host/launcher.py
+      - name: Launch and close packaged executable
+        run: python tools/smoke_windows.py dist/HandOff/HandOff.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows-desktop-preview
+          path: artifacts/windows-desktop.png
       - uses: actions/upload-artifact@v4
         with:
           name: HandOff-Windows
@@ -89,3 +95,41 @@ jobs:
           name: handoff-v1-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
 
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install TLS fixture dependencies
+        working-directory: .
+        run: python -m pip install -r host/requirements.txt
+      - name: Start local TLS fixture
+        working-directory: .
+        run: |
+          python -m tests.emulator_host /tmp/handoff-pairing.txt > /tmp/handoff-fixture.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            test -f /tmp/handoff-pairing.txt && exit 0
+            sleep 1
+          done
+          echo "TLS fixture did not start"
+          exit 1
+      - name: Enable KVM
+        working-directory: .
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android real TLS, decode, return and reconnect
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb push /tmp/handoff-pairing.txt /data/local/tmp/handoff-pairing.txt
+            cd android && gradle :app:connectedDebugAndroidTest --stacktrace
+      - name: Upload Android device test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-device-test-results
+          path: android/app/build/reports/androidTests/
