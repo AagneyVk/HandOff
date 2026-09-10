@@ -44,7 +44,7 @@ class Host:
         finally:
             if client.watch:
                 client.watch.cancel()
-                with contextlib.suppress(asyncio.CancelledError): await client.watch
+                with contextlib.suppress(asyncio.CancelledError, Exception): await client.watch
             await client.stop()
             self.connections -= 1
             writer.close()
@@ -87,7 +87,7 @@ class Connection:
             self.device = first['device']
             await self.send('ready', name=socket.gethostname())
         else:
-            await self.send('error', message='Pair this phone again from your computer.')
+            await self.send('revoked' if first['type'] == 'auth' else 'error', message='Pair this phone again from your computer.')
             return
         self.watch = asyncio.create_task(self.watch_authorization())
         while True:

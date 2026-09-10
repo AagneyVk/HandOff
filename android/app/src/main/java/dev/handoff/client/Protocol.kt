@@ -69,6 +69,7 @@ class ProtocolClient(
                 when (first.getString("type")) {
                     "paired" -> store.save(Credentials(host, port, pin, first.getString("device"), first.getString("token")))
                     "ready" -> Unit
+                    "revoked" -> { store.clear(); error(first.optString("message", "Pair again on your computer")) }
                     else -> error(first.optString("message", "Pairing failed"))
                 }
                     socket = tls; writer = out
@@ -143,8 +144,8 @@ class ProtocolClient(
                 }
             }
         } catch (_: RejectedExecutionException) {
-            state(epoch, "Connection is busy. Reconnect to continue.")
             close()
+            state(generation.get(), "Connection is busy. Reconnect to continue.")
         }
     }
     fun start(window: String) = send("start", JSONObject().put("window", window))

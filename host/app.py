@@ -57,14 +57,14 @@ class Desktop:
         self.rows = []
         self.invitation = ''
         root.title('HandOff')
-        root.geometry('940x660')
-        root.minsize(820, 600)
+        root.geometry('940x700')
+        root.minsize(820, 700)
         root.configure(bg='#f4f8f6')
         style = ttk.Style()
         style.theme_use('clam')
         style.configure('TFrame', background='#f4f8f6')
         style.configure('TLabel', background='#f4f8f6', foreground='#172d27', font=('Segoe UI', 11))
-        style.configure('TButton', font=('Segoe UI', 11), padding=10)
+        style.configure('TButton', font=('Segoe UI', 11), padding=8, background='#e3eee8', foreground='#173b30', borderwidth=0)
         style.configure('Accent.TButton', background='#006b58', foreground='white')
         style.configure('Treeview', font=('Segoe UI', 10), rowheight=36)
         main = ttk.Frame(root, padding=28); main.pack(fill='both', expand=True)
@@ -74,7 +74,7 @@ class Desktop:
         body = ttk.Frame(main); body.pack(fill='both', expand=True, pady=22)
         left = ttk.Frame(body); left.pack(side='left', fill='both', expand=True, padx=(0, 24))
         ttk.Label(left, text='1   Choose your app', font=('Segoe UI', 13, 'bold')).pack(anchor='w', pady=(0, 12))
-        self.table = ttk.Treeview(left, columns=('app',), show='tree headings', selectmode='browse', height=7)
+        self.table = ttk.Treeview(left, columns=('app',), show='tree headings', selectmode='browse', height=4)
         self.table.heading('#0', text='Window'); self.table.heading('app', text='App')
         self.table.column('#0', width=290); self.table.column('app', width=110)
         self.table.pack(fill='both', expand=True)
@@ -139,8 +139,7 @@ class Desktop:
         import qrcode
         from PIL import ImageTk
         self.invitation = self.trust.invitation(address, PORT, self.identity.fingerprint)
-        image = qrcode.make(self.invitation).get_image()
-        image = image.resize((270, 270))
+        image = qrcode.make(self.invitation, box_size=3, border=4, error_correction=qrcode.constants.ERROR_CORRECT_L).get_image()
         self.photo = ImageTk.PhotoImage(image)
         self.qr.configure(image=self.photo, text='')
 
