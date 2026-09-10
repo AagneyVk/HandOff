@@ -102,16 +102,8 @@ jobs:
       - name: Install TLS fixture dependencies
         working-directory: .
         run: python -m pip install -r host/requirements.txt
-      - name: Start local TLS fixture
-        working-directory: .
-        run: |
-          python -m tests.emulator_host /tmp/handoff-pairing.txt > /tmp/handoff-fixture.log 2>&1 &
-          for attempt in $(seq 1 30); do
-            test -f /tmp/handoff-pairing.txt && exit 0
-            sleep 1
-          done
-          echo "TLS fixture did not start"
-          exit 1
+      - name: Build device test APK before pairing
+        run: gradle :app:assembleDebugAndroidTest --stacktrace
       - name: Enable KVM
         working-directory: .
         run: |
@@ -125,6 +117,9 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: |
+            python -m tests.emulator_host /tmp/handoff-pairing.txt > /tmp/handoff-fixture.log 2>&1 &
+            for attempt in $(seq 1 30); do test -f /tmp/handoff-pairing.txt && break; sleep 1; done
+            test -f /tmp/handoff-pairing.txt
             adb push /tmp/handoff-pairing.txt /data/local/tmp/handoff-pairing.txt
             cd android && gradle :app:connectedDebugAndroidTest --stacktrace
       - name: Upload Android device test results
