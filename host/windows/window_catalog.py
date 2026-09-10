@@ -28,6 +28,12 @@ class WindowInfo:
 def _process_name(pid: int) -> str:
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
         return "Application"
@@ -46,6 +52,16 @@ def list_windows() -> list[WindowInfo]:
         return []
 
     user32 = ctypes.windll.user32
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
     windows: list[WindowInfo] = []
     enum_proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
@@ -74,6 +90,8 @@ def list_windows() -> list[WindowInfo]:
         ))
         return True
 
+    user32.EnumWindows.argtypes = [enum_proc_type, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
     callback_ref = enum_proc_type(callback)
     if not user32.EnumWindows(callback_ref, 0):
         raise ctypes.WinError()
@@ -87,3 +105,4 @@ def resolve_hwnd(window_id: str) -> int:
     if hwnd <= 0:
         raise ValueError("invalid HWND")
     return hwnd
+
