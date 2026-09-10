@@ -76,17 +76,11 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         LOG.info("client disconnected: %s", peer)
 
 
-async def main():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    server = await asyncio.start_server(handle, HOST, PORT)
-    LOG.info("HandOff V1 Windows host %s listening on port %d", host_name(), PORT)
-    async with server:
-        await server.serve_forever()
+def main():
+    # The historical entry point now launches the authenticated desktop host.
+    from host.app import main as launch
+    launch()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
-
+    main()

@@ -84,3 +84,4 @@ Initial product target: interactions should feel immediate on a healthy LAN. We 
 - process migration
 - URL/session reconstruction
 - multiple simultaneous handed-off windows
+

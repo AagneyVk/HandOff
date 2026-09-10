@@ -1,33 +1,39 @@
 package dev.handoff.client
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
+import org.junit.Assert.*
 import org.junit.Test
+import java.io.*
 
-/**
- * Pure JVM contract tests.
- *
- * org.json is provided by the Android runtime and its local-JVM stub methods throw
- * "Method ... not mocked" unless a separate implementation is added. Keep unit
- * tests platform-neutral; Android-runtime behaviour belongs in instrumented tests.
- */
 class ProtocolTest {
-    @Test
-    fun normalizedCoordinatesStayInsideProtocolRange() {
-        fun normalized(value: Float) = value.coerceIn(0f, 1f)
-
-        assertEquals(0.25f, normalized(0.25f), 0.0001f)
-        assertEquals(0.75f, normalized(0.75f), 0.0001f)
-        assertEquals(0f, normalized(-1f), 0.0001f)
-        assertEquals(1f, normalized(2f), 0.0001f)
+    @Test fun packetRoundTripAndTruncation() {
+        val buffer = ByteArrayOutputStream()
+        Wire.write(DataOutputStream(buffer), "hello".toByteArray())
+        val (kind, data) = Wire.read(DataInputStream(ByteArrayInputStream(buffer.toByteArray())))
+        assertEquals(1, kind); assertEquals("hello", String(data))
+        try {
+            Wire.read(DataInputStream(ByteArrayInputStream(buffer.toByteArray().copyOf(6))))
+            fail("Truncated packet accepted")
+        } catch (_: EOFException) { }
     }
-
-    @Test
-    fun protocolContractMatchesHostV0() {
-        val protocolVersion = 0
-        val requiredEnvelopeFields = setOf("version", "id", "type", "timestamp_us", "payload")
-
-        assertEquals(0, protocolVersion)
-        assertTrue(requiredEnvelopeFields.containsAll(listOf("version", "type", "payload")))
+    @Test fun oversizedPacketRejectedBeforeAllocation() {
+        val bytes = ByteArrayOutputStream()
+        DataOutputStream(bytes).writeInt(Int.MAX_VALUE)
+        try { Wire.read(DataInputStream(ByteArrayInputStream(bytes.toByteArray()))); fail("Oversize accepted") }
+        catch (_: IllegalArgumentException) { }
+    }
+    @Test fun pairingRequiresPinAndUniqueFields() {
+        val link = "handoff://pair?host=192.168.1.2&port=47821&pin=${"a".repeat(64)}&code=${"b".repeat(43)}"
+        assertEquals("192.168.1.2", Pairing.parse(link).host)
+        for (bad in listOf(link + "&host=evil", link.replace("handoff:", "http:"), link.replace("a".repeat(64), "abc"))) {
+            try { Pairing.parse(bad); fail("Invalid pairing accepted") }
+            catch (_: IllegalArgumentException) { }
+        }
+    }
+    @Test fun letterboxingNeverMapsBarsToInput() {
+        assertNull(contentPoint(100f, 10f, 200f, 400f, 200, 100))
+        assertEquals(.5f, contentPoint(100f, 200f, 200f, 400f, 200, 100)!!.first, .0001f)
+        assertEquals(.5f, contentPoint(100f, 200f, 200f, 400f, 200, 100)!!.second, .0001f)
+        assertNull(contentPoint(Float.NaN, 0f, 200f, 400f, 200, 100))
+        assertNull(contentPoint(0f, 0f, 0f, 400f, 200, 100))
     }
 }

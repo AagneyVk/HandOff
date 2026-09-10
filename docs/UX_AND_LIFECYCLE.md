@@ -70,3 +70,4 @@ Diagnostics may expose RTT, loss, bitrate, FPS, codec, queues and protocol event
 ## Production acceptance
 
 A feature is not considered ready because it compiles. Release gates include Android unit/lint/instrumented checks, Windows tests, physical Windows↔Android runs, lifecycle matrix, 30-minute soak, repeated reconnect, packet loss/jitter, DPI/multi-monitor, orientation/resize, permission-negative paths, and authentication-negative paths.
+

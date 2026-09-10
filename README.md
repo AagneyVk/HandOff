@@ -1,48 +1,68 @@
 # HandOff
 
-Local-first application continuity for Android and desktop. **Development preview, not a production release.**
+Continue a running desktop app on Android over your local network. The app keeps running on the computer; HandOff sends its selected window to your phone and maps touch back to it.
 
-## Current implementation
+## Get started
 
-The Android client connects to a manually entered Windows host address and lists real open windows. It provides refresh, cancellation, disconnect, and connection failure states. Network writes run off the UI thread; connection callbacks are delivered on the UI thread, and stale connections cannot close a newer connection.
+1. Open **Actions → Framework tests** and choose a successful run on `v1`.
+2. Download **HandOff-Windows**, extract it fully, and launch `HandOff.exe`. Keep the `_internal` folder beside it.
+3. Download **handoff-v1-debug-apk**, extract it, and install the APK on Android 8 or newer.
+4. Put both devices on the same private network. Allow HandOff on **private networks** if Windows Firewall asks.
+5. In desktop HandOff, select an app and click **Share selected app**.
+6. Choose the computer's LAN address and click **New pairing code**. In Android HandOff, tap **Pair with QR code** and scan it.
+7. Tap **Continue here**. Tap the video to click; swipe vertically to scroll. Keep the shared app foreground on the computer to allow input.
+8. Tap **Return** on Android or **Stop sharing** on the computer to end the session.
 
-Live window capture, media transport, Android video decoding, audio, authenticated pairing, automatic discovery, and Linux capture are not implemented. The earlier animated “Live” screen was a local demonstration, not received video. Session start now reports this limitation, and remote input is disabled until authenticated live sessions exist.
+The code expires after five minutes and works once. Afterwards, the phone can reconnect using its saved pairing. **Remove all paired phones** revokes access. Camera permission is used only by the QR scanner; **Use a pairing link** is also available.
 
-## Run the Windows preview
+## Implemented
 
-Install Python 3.12 or newer, open a terminal at the repository root, and run:
+- Desktop sharing UI and Android connection/live/return UI.
+- TLS 1.2+ with explicit SHA-256 certificate pinning from the locally displayed QR code.
+- Single-use 256-bit pairing invitations, per-device credentials, revocation, hashed host-side tokens and Android Keystore-encrypted credential storage.
+- Windows client-area capture and Linux X11 XComposite window capture. Neither falls back to capturing the whole desktop.
+- Bounded JPEG framing, decoder dimension checks, one frame in flight, capture-process deadlines and network timeouts.
+- Foreground and occlusion checks before pointer input; letterbox-aware Android coordinates, session/sequence validation and input rate limits.
+- Return, disconnect, closed-window/capture error handling, and automatic disconnect when Android goes into the background.
+- Windows executable and Android debug APK build artifacts.
+
+## Current release scope
+
+This is an **RC implementation**, not a claim of completed production certification. Video is JPEG at a maximum of 12 frames per second, up to 1600 × 1000; actual throughput depends on the app and network. Audio, keyboard entry, drag-and-drop, Android-as-source, native Wayland, hardware video codecs, signed distribution and seamless background reconnection are not implemented. Protected or GPU-rendered windows may return blank frames through PrintWindow. Elevated Windows apps cannot necessarily accept input from a normal host process.
+
+The Android artifact is debug-signed, and the Windows executable is unsigned. Do not call build success a real-device latency or compatibility measurement. Physical Android ↔ Windows/Arch acceptance testing remains required before promoting a stable release.
+
+## Run from source
+
+Windows: install Python 3.12+, then double-click `start-windows.bat`, or:
 
 ```sh
-python -m host.windows.v1_host
+python -m pip install -r host/requirements.txt
+python -m host.app
 ```
 
-Connect Android to the same trusted LAN and enter the computer's IPv4 address in HandOff. The preview listens on TCP port 47820. Allow Python on private networks in Windows Firewall if prompted. The window catalog contains application titles and is not encrypted or authenticated: do not expose this preview port to the internet or an untrusted network.
+Arch Linux: use an X11 session; install `python`, `tk`, `libxcomposite` and a working X server. Then:
 
-## Build Android
+```sh
+bash start-linux.sh
+```
 
-Open `android` in Android Studio with JDK 17 and Android SDK 35, or use installed Gradle 8.10.2:
+Other Linux distributions also need Python venv/Tk support. Native Wayland is rejected explicitly. The host uses TCP **47821**; no router port-forwarding is needed. If an address changes, generate a fresh pairing code. There is no cloud relay or paid API.
+
+Android development: open `android` in Android Studio with JDK 17 and Android SDK 35, or run installed Gradle 8.10.2:
 
 ```sh
 cd android
 gradle :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
 
-The GitHub Actions Android job publishes the debug APK as an artifact. No Gradle wrapper is currently committed.
-
-## Tests
+## Verification
 
 ```sh
+python -m pip install -r host/requirements.txt
 python -m unittest discover -s tests -v
 ```
 
-Tests include actual TCP exchanges for hello, window listing, malformed message recovery, and rejection of unavailable sessions and remote input. Native window enumeration tests require Windows. Android compilation and lint run in CI; a passing build does not establish real-device streaming support.
+CI runs encrypted socket integration tests, Windows native pixel capture, Linux XComposite pixel capture under Xvfb, Android JVM tests/build/lint and Windows packaging. Test fixtures for transport use generated images; separate native tests exercise real window APIs.
 
-## Production completion gates
-
-- Authenticated, encrypted pairing with local consent and revocation.
-- Windows and Linux native window capture, bounded media queues, codec negotiation and Android decoding.
-- Input routed only to the visible authorized application, matching the video content rectangle.
-- Lifecycle handling, reconnection, discovery, packaging and signed releases.
-- Measured Android/Windows/Linux device tests for video, audio, input, rotation, network loss and repeated handoff.
-
-Architecture proposals in `docs` describe the intended product, not implemented capabilities.
+See [runtime protocol](docs/RUNTIME_V1.md) and [acceptance checklist](docs/ACCEPTANCE.md). Older architecture documents describe the vision; the implemented runtime is `host/runtime` and the Android V1 framed-TLS client. The old newline-delimited V0 harness is for development only and is incompatible with the new Android client.

@@ -86,3 +86,4 @@ A release cannot be called production-ready until all are green:
 8. Pairing/encryption, discovery, adaptive quality, reconnect and soak tests.
 
 This keeps HandOff's differentiator: a handed-off *window/activity surface*, not a generic whole-desktop remote-control product.
+

@@ -25,3 +25,4 @@ V1 LAN target: prioritize interaction latency over perfect frame delivery. No un
 ## Release measurements
 
 Record capture->encode, encode->send, network, receive->decode, decode->present, and input->visible-response latency separately. Also record dropped frames, queue depth, bitrate, FPS, decoder resets, reconnects and CPU/GPU load. A green build is not a streaming-performance pass.
+

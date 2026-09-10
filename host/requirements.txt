@@ -1,0 +1,4 @@
+cryptography==46.0.0
+Pillow==12.3.0
+qrcode==8.2
+python-xlib==0.33; sys_platform == 'linux'

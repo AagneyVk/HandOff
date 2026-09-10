@@ -107,3 +107,4 @@ input -> network -> inject -> app render -> capture -> display
 ```
 
 The second metric is the important product metric: **input-to-visible-response latency**.
+

@@ -35,19 +35,34 @@ def _require_windows():
         raise OSError("Windows input backend requires win32")
 
 
-def _screen_point(window_id: str, x: float, y: float) -> tuple[int, int]:
+def _screen_point(window_id: str, x: float, y: float, expected_size=None) -> tuple[int, int]:
     _require_windows()
     hwnd = resolve_hwnd(window_id)
     user32 = ctypes.windll.user32
+    user32.IsWindow.argtypes = [wintypes.HWND]
+    user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.WindowFromPoint.argtypes = [wintypes.POINT]
+    user32.WindowFromPoint.restype = wintypes.HWND
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetAncestor.restype = wintypes.HWND
     if not user32.IsWindow(hwnd):
         raise ValueError("target window no longer exists")
     rect = wintypes.RECT()
     if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
         raise ctypes.WinError()
+    if expected_size is not None and (rect.right, rect.bottom) != expected_size:
+        raise ValueError("Window resized. Wait for the next frame.")
+    if user32.GetForegroundWindow() != hwnd:
+        raise ValueError("Bring the shared app to the foreground on your computer to control it.")
     p = wintypes.POINT(int(normalized(x, "x") * max(0, rect.right - rect.left - 1)),
                        int(normalized(y, "y") * max(0, rect.bottom - rect.top - 1)))
     if not user32.ClientToScreen(hwnd, ctypes.byref(p)):
         raise ctypes.WinError()
+    hit = user32.WindowFromPoint(p)
+    if user32.GetAncestor(hit, 2) != hwnd:
+        raise ValueError("Another window covers this point. Move it on your computer first.")
     return p.x, p.y
 
 
@@ -68,8 +83,8 @@ def _send(flags: int, x: int = 0, y: int = 0, data: int = 0):
         raise ctypes.WinError()
 
 
-def tap(window_id: str, x: float, y: float):
-    px, py = _screen_point(window_id, x, y)
+def tap(window_id: str, x: float, y: float, expected_size=None):
+    px, py = _screen_point(window_id, x, y, expected_size)
     ax, ay = _absolute(px, py)
     base = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK
     _send(base, ax, ay)
@@ -77,9 +92,10 @@ def tap(window_id: str, x: float, y: float):
     _send(MOUSEEVENTF_LEFTUP)
 
 
-def scroll(window_id: str, x: float, y: float, dy: float):
-    px, py = _screen_point(window_id, x, y)
+def scroll(window_id: str, x: float, y: float, dy: float, expected_size=None):
+    px, py = _screen_point(window_id, x, y, expected_size)
     ax, ay = _absolute(px, py)
     _send(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, ax, ay)
     amount = max(-10, min(10, float(dy)))
     _send(MOUSEEVENTF_WHEEL, data=round(amount * WHEEL_DELTA))
+

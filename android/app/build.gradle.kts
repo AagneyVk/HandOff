@@ -12,8 +12,8 @@ android {
         applicationId = "dev.handoff.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.0-dev"
+        versionCode = 3
+        versionName = "1.0.0-rc1"
     }
 
     compileOptions {
@@ -29,6 +29,7 @@ android {
 }
 
 dependencies {
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("androidx.activity:activity-compose:1.10.0")
     implementation("androidx.compose.ui:ui:1.7.6")
     implementation("androidx.compose.ui:ui-tooling-preview:1.7.6")
@@ -37,3 +38,4 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.6")
 }
+
