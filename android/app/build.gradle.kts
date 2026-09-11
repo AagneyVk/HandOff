@@ -10,11 +10,12 @@ android {
 
     defaultConfig {
         applicationId = "dev.handoff.client"
+        buildConfigField("String", "SOURCE_REVISION", "\"${System.getenv("HANDOFF_SOURCE_REVISION")?.takeIf { it.matches(Regex("[0-9a-f]{40}")) } ?: "local"}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.0-rc1"
+        versionCode = 4
+        versionName = "1.0.0-rc2"
     }
 
     compileOptions {
@@ -26,7 +27,23 @@ android {
         jvmToolchain(17)
     }
 
-    buildFeatures { compose = true }
+    signingConfigs {
+        if (!System.getenv("ANDROID_KEYSTORE_PATH").isNullOrBlank()) {
+            create("release") {
+                storeFile = file(System.getenv("ANDROID_KEYSTORE_PATH"))
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.findByName("release")
+            isDebuggable = false
+        }
+    }
+    buildFeatures { compose = true; buildConfig = true }
 }
 
 dependencies {

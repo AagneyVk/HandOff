@@ -30,6 +30,8 @@ class ProtocolClient(
     private val onVideoFrame: (Int, Int, Int) -> Unit = { _, _, _ -> },
     private val onAudio: () -> Unit = {},
 ) {
+    private val report = SessionReport()
+    fun report(): JSONObject = report.json()
     private val main = Handler(Looper.getMainLooper())
     private val generation = AtomicLong()
     private val output = ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, ArrayBlockingQueue(64))
@@ -91,8 +93,8 @@ class ProtocolClient(
                 while (generation.get() == epoch) {
                     val msg = readJson(input)
                     when (msg.getString("type")) {
-                        "started" -> session = msg.getString("session")
-                        "stopped" -> { session = null; decoder?.close(); decoder = null; decoderSize = null; player?.close(); player = null }
+                        "started" -> { session = msg.getString("session"); report.start(msg.optString("codec"), msg.optString("encoder")) }
+                        "stopped" -> { report.stop(); session = null; decoder?.close(); decoder = null; decoderSize = null; player?.close(); player = null }
                         "audio.stopped" -> { player?.close(); player = null }
                         "audio" -> {
                             require(msg.getString("session") == session && audioAllowed) { "Unexpected audio session" }
@@ -107,6 +109,7 @@ class ProtocolClient(
                                 }
                             }
                             player?.offer(bytes)
+                            report.audio()
                             main.post { if (generation.get() == epoch && !disposed) onAudio() }
                             continue
                         }
@@ -127,6 +130,7 @@ class ProtocolClient(
                                     decoderSize = width to height
                                 }
                                 decoder.render(bytes, sequence)
+                                report.video(bytes.size)
                                 main.post { if (generation.get() == epoch && !disposed) onVideoFrame(width, height, sequence) }
                                 send("ack", JSONObject().put("sequence", sequence), true)
                                 continue
@@ -137,6 +141,7 @@ class ProtocolClient(
                             require(options.outWidth in 1..1600 && options.outHeight in 1..1000 && options.outMimeType == "image/jpeg") { "Unsupported video dimensions" }
                             require(options.outWidth == msg.getInt("width") && options.outHeight == msg.getInt("height")) { "Video dimensions changed unexpectedly" }
                             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: error("Could not decode video")
+                            report.video(bytes.size)
                             val frameSession = session
                             main.post {
                                 if (generation.get() == epoch && session == frameSession && !disposed) {
@@ -153,6 +158,7 @@ class ProtocolClient(
                     main.post { if (generation.get() == epoch && !disposed) onMessage(msg) }
                 }
             } catch (e: Exception) {
+                if (generation.get() == epoch) { report.error(); report.stop() }
                 state(epoch, e.message ?: "Connection lost. Reconnect to continue.")
             } finally {
                 try { decoder?.close() } catch (_: Exception) {}
@@ -202,6 +208,7 @@ class ProtocolClient(
     fun tap(x: Float, y: Float, sequence: Int) = send("tap", JSONObject().put("x", x).put("y", y).put("sequence", sequence), true)
     fun scroll(x: Float, y: Float, dy: Float, sequence: Int) = send("scroll", JSONObject().put("x", x).put("y", y).put("dy", dy).put("sequence", sequence), true)
     @Synchronized fun close() {
+        report.stop()
         generation.incrementAndGet()
         try { socket?.close() } catch (_: Exception) { }
         socket = null; writer = null; session = null

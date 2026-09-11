@@ -99,6 +99,14 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
         try { val link = Pairing.parse(raw); pairingText = ""; client.pair(link) }
         catch (e: Exception) { status = e.message ?: "That pairing link is invalid" }
     }
+    val export = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { it.write(client.report().toString(2).toByteArray()) }
+                status = "Session report saved"
+            } catch (_: Exception) { status = "Could not save the report" }
+        }
+    }
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let { pair(it) } }
     BackHandler(live) { client.stop() }
     val dark = androidx.compose.foundation.isSystemInDarkTheme()
@@ -187,6 +195,7 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                         }
                     }
                     item {
+                        TextButton(onClick = { export.launch("handoff-session.json") }, enabled = client.report().optInt("decoded_frames") > 0) { Text("Export session report") }
                         Text("Private by design", style = MaterialTheme.typography.titleMedium)
                         Text("Pair directly with your computer. Only the app you choose is shared over your local network. Stop sharing on either device at any time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(24.dp))

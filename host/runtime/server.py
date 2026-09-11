@@ -231,6 +231,8 @@ class Connection:
                         rate=48000, channels=2, format='s16le')))
                     self.writer.write(wire.encode(wire.PCM, chunk))
                     await asyncio.wait_for(self.writer.drain(), 1)
+            if self.session:
+                await self.send('audio.stopped', message='Audio disabled on your computer.')
         except asyncio.CancelledError:
             raise
         except Exception as exc:

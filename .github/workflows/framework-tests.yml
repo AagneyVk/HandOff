@@ -65,6 +65,8 @@ jobs:
           if-no-files-found: error
 
   android-client:
+    env:
+      HANDOFF_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
     name: Android client build / test / lint
     runs-on: ubuntu-latest
     defaults:

@@ -17,14 +17,16 @@ class AudioPlayer {
         .setTransferMode(AudioTrack.MODE_STREAM).build()
     private val worker: Thread
     init {
-        check(track.state == AudioTrack.STATE_INITIALIZED) { "Audio output unavailable" }
-        track.play()
+        try {
+            check(track.state == AudioTrack.STATE_INITIALIZED) { "Audio output unavailable" }
+            track.play()
+        } catch (e: Exception) { track.release(); throw e }
         worker = thread(name="handoff-audio", isDaemon=true) {
             try {
                 while (!closed) {
                     val data = queue.take()
                     if (closed) break
-                    track.write(data, 0, data.size, AudioTrack.WRITE_BLOCKING)
+                    check(track.write(data, 0, data.size, AudioTrack.WRITE_BLOCKING) >= 0) { "Audio device disconnected" }
                 }
             } catch (_: Exception) { }
             finally { closed = true; track.release() }
@@ -37,7 +39,6 @@ class AudioPlayer {
     @Synchronized fun close() {
         if (closed) return
         closed = true
-        track.pause(); track.flush()
-        worker.interrupt()
+        try { track.pause(); track.flush() } finally { worker.interrupt() }
     }
 }
