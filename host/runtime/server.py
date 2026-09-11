@@ -139,7 +139,8 @@ class Connection:
                 first_frame = await self.capture.frame()
                 self.validate_session()
                 codec = first_frame[5] if len(first_frame) > 5 else 'jpeg'
-                await self.send('started', session=self.session, codec=codec, audio=False,
+                await self.send('started', session=self.session, codec=codec,
+                    audio=msg.get('audio') is True and self.host.audio_enabled,
                     width=first_frame[1], height=first_frame[2], encoder=first_frame[6] if len(first_frame) > 6 else 'jpeg')
                 self.host.status = 'Sharing with paired phone · Stop sharing to end'
                 self.stream = asyncio.create_task(self.frames(first_frame))
