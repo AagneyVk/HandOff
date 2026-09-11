@@ -3,6 +3,7 @@ package dev.handoff.client
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -143,12 +144,18 @@ class PhoneProjectionService : Service() {
 
     @android.annotation.TargetApi(29)
     private fun startPlaybackAudio() {
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED) return
         val config = AudioPlaybackCaptureConfiguration.Builder(projection ?: return)
             .addMatchingUsage(AudioAttributes.USAGE_MEDIA).addMatchingUsage(AudioAttributes.USAGE_GAME).build()
         val format = AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(48000)
             .setChannelMask(AudioFormat.CHANNEL_IN_STEREO).build()
-        audioRecord = AudioRecord.Builder().setAudioFormat(format).setBufferSizeInBytes(7680)
-            .setAudioPlaybackCaptureConfig(config).build().also { it.startRecording() }
+        audioRecord = try {
+            AudioRecord.Builder().setAudioFormat(format).setBufferSizeInBytes(7680)
+                .setAudioPlaybackCaptureConfig(config).build().also { it.startRecording() }
+        } catch (_: SecurityException) {
+            return
+        }
         audioThread = thread(name="handoff-phone-audio", isDaemon=true) {
             val data = ByteArray(3840)
             while (running.get()) {
