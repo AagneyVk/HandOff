@@ -25,8 +25,11 @@ class LiveConnectionTest {
         val frames = CountDownLatch(2)
         val audio = CountDownLatch(2)
         val h264Frames = AtomicInteger()
-        val texture = android.graphics.SurfaceTexture(false)
-        val surface = android.view.Surface(texture)
+        // Drain decoded output just as SurfaceView's compositor does in the app.
+        // An unconsumed SurfaceTexture fills its buffer queue and can block codec.stop().
+        val images = android.media.ImageReader.newInstance(64, 48, android.graphics.ImageFormat.YUV_420_888, 3)
+        images.setOnImageAvailableListener({ reader -> reader.acquireLatestImage()?.close() }, android.os.Handler(android.os.Looper.getMainLooper()))
+        val surface = images.surface
         val returned = CountDownLatch(1)
         val reconnected = CountDownLatch(1)
         val count = AtomicInteger()
@@ -64,6 +67,6 @@ class LiveConnectionTest {
             client.reconnect(store.load()!!)
             assertTrue("Reconnect timed out: ${failure.get()}", reconnected.await(15, TimeUnit.SECONDS))
             assertNull(failure.get())
-        } finally { client.dispose(); store.clear(); surface.release(); texture.release() }
+        } finally { client.dispose(); store.clear(); images.close() }
     }
 }
