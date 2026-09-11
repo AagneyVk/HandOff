@@ -5,7 +5,7 @@ import multiprocessing
 import sys
 
 
-def _worker(pipe, window, pid, prefer_h264):
+def _worker(pipe, window, pid, prefer_h264, profile):
     try:
         if sys.platform == 'win32':
             import ctypes
@@ -15,7 +15,7 @@ def _worker(pipe, window, pid, prefer_h264):
         else:
             from host.linux.capture import grab
         from .encoder import VideoEncoder
-        encoder = VideoEncoder(prefer_h264)
+        encoder = VideoEncoder(prefer_h264, profile=profile)
         while pipe.recv() == 'frame':
             try:
                 image = grab(window, pid)
@@ -34,10 +34,10 @@ def _worker(pipe, window, pid, prefer_h264):
 
 
 class Capture:
-    def __init__(self, window, pid, prefer_h264=False):
+    def __init__(self, window, pid, prefer_h264=False, profile='balanced'):
         context = multiprocessing.get_context('spawn')
         self.pipe, child = context.Pipe()
-        self.process = context.Process(target=_worker, args=(child, window, pid, prefer_h264), daemon=True)
+        self.process = context.Process(target=_worker, args=(child, window, pid, prefer_h264, profile), daemon=True)
         self.process.start()
         child.close()
 

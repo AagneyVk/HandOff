@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onStop() { background?.invoke(); super.onStop() }
 }
-private data class AppWindow(val id: String, val title: String, val app: String)
+private data class AppWindow(val id: String, val title: String, val app: String, val kind: String)
 
 @Composable
 private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -> Unit) {
@@ -60,6 +60,10 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
     var videoCodec by remember { mutableStateOf("jpeg") }
     var videoSize by remember { mutableStateOf(640 to 480) }
     var title by remember { mutableStateOf("Your app") }
+    var dragMode by remember { mutableStateOf(false) }
+    var keyboardSupported by remember { mutableStateOf(false) }
+    var textEntry by remember { mutableStateOf("") }
+    var profile by remember { mutableStateOf("balanced") }
     val client = remember {
         ProtocolClient(store, onState = { value ->
             status = value
@@ -73,11 +77,13 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
             when (msg.getString("type")) {
                 "windows" -> {
                     val array = msg.getJSONArray("windows")
-                    windows = (0 until array.length()).map { array.getJSONObject(it).let { w -> AppWindow(w.getString("id"), w.getString("title"), w.optString("app")) } }
+                    windows = (0 until array.length()).map { array.getJSONObject(it).let { w -> AppWindow(w.getString("id"), w.getString("title"), w.optString("app"), w.optString("kind", "window")) } }
                 }
                 "started" -> {
                     videoCodec = msg.optString("codec", "jpeg")
                     videoSize = msg.optInt("width", 640) to msg.optInt("height", 480)
+                    val controls = msg.optJSONArray("controls")
+                    keyboardSupported = controls != null && (0 until controls.length()).any { controls.optString(it) == "text" }
                     live = true; busy = false
                     status = if (videoCodec == "h264") "H.264 · ${msg.optString("encoder")}" else "Compatibility video · JPEG"
                 }
@@ -126,10 +132,32 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        if (videoCodec == "h264") LiveVideo(videoSize, sequence, client)
-                        else bitmap?.let { frame -> LiveImage(frame, sequence, client) } ?: CircularProgressIndicator()
+                        if (videoCodec == "h264") LiveVideo(videoSize, sequence, client, dragMode)
+                        else bitmap?.let { frame -> LiveImage(frame, sequence, client, dragMode) } ?: CircularProgressIndicator()
                     }
-                    Text("Tap to click · Swipe to scroll", color = Color.White, modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.labelMedium)
+                    Surface(color = MaterialTheme.colorScheme.surface) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                FilterChip(selected = !dragMode, onClick = { dragMode = false }, label = { Text("Scroll") })
+                                Spacer(Modifier.width(8.dp))
+                                FilterChip(selected = dragMode, onClick = { dragMode = true }, label = { Text("Drag") })
+                                Spacer(Modifier.weight(1f))
+                                Text(if (dragMode) "Swipe drags on the computer" else "Swipe scrolls", style = MaterialTheme.typography.labelSmall)
+                            }
+                            if (keyboardSupported) {
+                                OutlinedTextField(textEntry, { textEntry = it.take(256) }, modifier = Modifier.fillMaxWidth(),
+                                    placeholder = { Text("Type on computer") }, singleLine = true,
+                                    trailingIcon = { TextButton(onClick = { if (textEntry.isNotEmpty()) { client.text(textEntry, sequence); textEntry = "" } }) { Text("Send") } })
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    TextButton(onClick = { client.key("backspace", sequence) }) { Text("⌫") }
+                                    TextButton(onClick = { client.key("enter", sequence) }) { Text("Enter") }
+                                    TextButton(onClick = { client.key("escape", sequence) }) { Text("Esc") }
+                                    TextButton(onClick = { client.key("left", sequence) }) { Text("←") }
+                                    TextButton(onClick = { client.key("right", sequence) }) { Text("→") }
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -139,7 +167,7 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                         Spacer(Modifier.height(10.dp))
                         Text("Pick up where\nyou left off.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(8.dp))
-                        Text("Keep your app running on your computer. Bring its window to your phone.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Bring a running computer app—or an entire display you explicitly approve—to your phone.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     item {
                         ElevatedCard(Modifier.fillMaxWidth()) {
@@ -180,16 +208,22 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                                 Text("Play computer audio (all apps)")
                             }
                             Text("Audio also needs approval on your computer.", style = MaterialTheme.typography.bodySmall)
+                            Text("Streaming", style = MaterialTheme.typography.titleSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf("smooth" to "Smooth", "balanced" to "Balanced", "sharp" to "Sharp").forEach { choice ->
+                                    FilterChip(selected = profile == choice.first, onClick = { profile = choice.first }, label = { Text(choice.second) })
+                                }
+                            }
                             Spacer(Modifier.height(16.dp))
                             Text("Shared with you", style = MaterialTheme.typography.titleLarge)
                         }
-                        if (windows.isEmpty()) item { Text("Select an app in HandOff on your computer, click Share selected app, then refresh here.") }
+                        if (windows.isEmpty()) item { Text("Select an app or display in HandOff on your computer, click Share selected, then refresh here.") }
                         items(windows, key = { it.id }) { window ->
                             OutlinedCard(Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text(window.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                    Text(window.app, style = MaterialTheme.typography.bodySmall)
-                                    Button(onClick = { title = window.title; busy = true; status = "Opening your app…"; client.start(window.id, compatibility, audioChoice) }, enabled = !busy) { Text("Continue here") }
+                                    Text(if (window.kind == "display") "Everything visible on this display" else window.app, style = MaterialTheme.typography.bodySmall)
+                                    Button(onClick = { title = window.title; busy = true; status = "Opening your app…"; client.start(window.id, compatibility, audioChoice, profile) }, enabled = !busy) { Text("Continue here") }
                                 }
                             }
                         }
@@ -197,7 +231,7 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                     item {
                         TextButton(onClick = { export.launch("handoff-session.json") }, enabled = client.report().optInt("decoded_frames") > 0) { Text("Export session report") }
                         Text("Private by design", style = MaterialTheme.typography.titleMedium)
-                        Text("Pair directly with your computer. Only the app you choose is shared over your local network. Stop sharing on either device at any time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Pair directly with your computer. Only the app or display you explicitly choose is shared over your local network. Stop sharing on either device at any time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(24.dp))
                     }
                 }
@@ -207,14 +241,14 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
 }
 
 @Composable
-private fun LiveImage(frame: Bitmap, sequence: Int, client: ProtocolClient) {
+private fun LiveImage(frame: Bitmap, sequence: Int, client: ProtocolClient, dragMode: Boolean) {
     Image(frame.asImageBitmap(), contentDescription = "Shared application", contentScale = ContentScale.Fit,
-        modifier = Modifier.fillMaxSize().remoteInput(frame.width, frame.height, sequence, client))
+        modifier = Modifier.fillMaxSize().remoteInput(frame.width, frame.height, sequence, client, dragMode))
 }
 
 @Composable
-private fun LiveVideo(dimensions: Pair<Int, Int>, sequence: Int, client: ProtocolClient) {
-    BoxWithConstraints(Modifier.fillMaxSize().remoteInput(dimensions.first, dimensions.second, sequence, client), contentAlignment = Alignment.Center) {
+private fun LiveVideo(dimensions: Pair<Int, Int>, sequence: Int, client: ProtocolClient, dragMode: Boolean) {
+    BoxWithConstraints(Modifier.fillMaxSize().remoteInput(dimensions.first, dimensions.second, sequence, client, dragMode), contentAlignment = Alignment.Center) {
         val ratio = dimensions.first.toFloat() / dimensions.second
         val width = minOf(maxWidth, maxHeight * ratio)
         AndroidView(modifier = Modifier.size(width, width / ratio), factory = { context ->
@@ -230,7 +264,7 @@ private fun LiveVideo(dimensions: Pair<Int, Int>, sequence: Int, client: Protoco
 }
 
 @Composable
-private fun Modifier.remoteInput(width: Int, height: Int, sequence: Int, client: ProtocolClient): Modifier {
+private fun Modifier.remoteInput(width: Int, height: Int, sequence: Int, client: ProtocolClient, dragMode: Boolean): Modifier {
     val currentSequence by rememberUpdatedState(sequence)
     val dimensions by rememberUpdatedState(width to height)
     return this
@@ -240,11 +274,21 @@ private fun Modifier.remoteInput(width: Int, height: Int, sequence: Int, client:
                     ?.let { client.tap(it.first, it.second, currentSequence) }
             }
         }
-        .pointerInput(Unit) {
+        .pointerInput(dragMode) {
             var accumulated = 0f
-            detectDragGestures(onDragStart = { accumulated = 0f }, onDrag = { change, drag ->
-                change.consume(); accumulated += drag.y
-                if (kotlin.math.abs(accumulated) >= 24f) {
+            var start: Pair<Float, Float>? = null
+            var end: Pair<Float, Float>? = null
+            detectDragGestures(onDragStart = { point ->
+                accumulated = 0f
+                start = contentPoint(point.x, point.y, size.width.toFloat(), size.height.toFloat(), dimensions.first, dimensions.second)
+                end = start
+            }, onDragEnd = {
+                if (dragMode) start?.let { from -> end?.let { to -> client.drag(from.first, from.second, to.first, to.second, currentSequence) } }
+            }, onDrag = { change, drag ->
+                change.consume()
+                end = contentPoint(change.position.x, change.position.y, size.width.toFloat(), size.height.toFloat(), dimensions.first, dimensions.second)
+                accumulated += drag.y
+                if (!dragMode && kotlin.math.abs(accumulated) >= 24f) {
                     contentPoint(change.position.x, change.position.y, size.width.toFloat(), size.height.toFloat(), dimensions.first, dimensions.second)
                         ?.let { client.scroll(it.first, it.second, (-accumulated / 60f).coerceIn(-5f, 5f), currentSequence) }
                     accumulated = 0f

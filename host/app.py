@@ -24,13 +24,14 @@ def backends():
             ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
         from .windows.window_catalog import list_windows
         from .windows.capture import identity
-        from .windows.input_backend import tap, scroll
+        from .windows.input_backend import tap, scroll, drag, text, key
     elif sys.platform.startswith('linux'):
         from .linux.capture import list_windows, identity
-        from .linux.input_backend import tap, scroll
+        from .linux.input_backend import tap, scroll, drag
+        text = key = None
     else:
         raise RuntimeError('HandOff supports Windows and Linux X11 hosts.')
-    return list_windows, identity, tap, scroll
+    return list_windows, identity, tap, scroll, drag, text, key
 
 
 def local_addresses():
@@ -48,7 +49,8 @@ class Desktop:
         directory = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.local' / 'share')) / 'HandOff'
         self.identity = Identity(directory)
         self.trust = TrustStore(directory)
-        self.host = Host(self.trust, *backends())
+        catalog, identify, tap, scroll, drag, text, key = backends()
+        self.host = Host(self.trust, catalog, identify, tap, scroll, drag=drag, text=text, key=key)
         self.loop = None
         self.server_task = None
         self.ready = False
@@ -70,17 +72,17 @@ class Desktop:
         main = ttk.Frame(root, padding=28); main.pack(fill='both', expand=True)
         ttk.Label(main, text='HANDOFF', foreground='#006b58', font=('Segoe UI', 11, 'bold')).pack(anchor='w')
         ttk.Label(main, text='Your app. Wherever you need it.', font=('Segoe UI', 24, 'bold')).pack(anchor='w', pady=(8, 8))
-        ttk.Label(main, text='Choose an app to share, then scan the code with HandOff on your phone.').pack(anchor='w')
+        ttk.Label(main, text='Choose one app or an entire display, then scan the code with HandOff on your phone.').pack(anchor='w')
         body = ttk.Frame(main); body.pack(fill='both', expand=True, pady=22)
         left = ttk.Frame(body); left.pack(side='left', fill='both', expand=True, padx=(0, 24))
-        ttk.Label(left, text='1   Choose your app', font=('Segoe UI', 13, 'bold')).pack(anchor='w', pady=(0, 12))
+        ttk.Label(left, text='1   Choose an app or display', font=('Segoe UI', 13, 'bold')).pack(anchor='w', pady=(0, 12))
         self.table = ttk.Treeview(left, columns=('app',), show='tree headings', selectmode='browse', height=3)
         self.table.heading('#0', text='Window'); self.table.heading('app', text='App')
         self.table.column('#0', width=290); self.table.column('app', width=110)
         self.table.pack(fill='both', expand=True)
         controls = ttk.Frame(left); controls.pack(fill='x', pady=10)
         ttk.Button(controls, text='Refresh', command=self.refresh).pack(side='left')
-        ttk.Button(controls, text='Share selected app', style='Accent.TButton', command=self.share).pack(side='right')
+        ttk.Button(controls, text='Share selected', style='Accent.TButton', command=self.share).pack(side='right')
         ttk.Button(left, text='Stop sharing', command=self.host.stop).pack(fill='x')
         right = ttk.Frame(body); right.pack(side='right', fill='y')
         ttk.Label(right, text='2   Pair your phone', font=('Segoe UI', 13, 'bold')).pack(anchor='w')
@@ -128,7 +130,12 @@ class Desktop:
 
     def share(self):
         selected = self.table.selection()
-        if not selected: return messagebox.showinfo('Choose an app', 'Select a window from the list first.')
+        if not selected: return messagebox.showinfo('Choose what to share', 'Select an app window or entire display first.')
+        target = next((row for row in self.rows if row.id == selected[0]), None)
+        if target and target.kind == 'display' and not messagebox.askyesno(
+                'Share entire display?',
+                'Everything visible on this display can appear on your phone, and the phone can control it. Continue?'):
+            return
         try: self.host.approve(selected[0])
         except Exception as exc: messagebox.showerror('Could not share', str(exc))
 

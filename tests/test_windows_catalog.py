@@ -15,12 +15,12 @@ class WindowsCatalogTests(unittest.TestCase):
     def test_enumeration_returns_valid_records(self):
         # Hosted CI can have no interactive user windows, so an empty catalog is valid.
         for window in list_windows():
-            self.assertTrue(window.id.startswith("win32:"))
+            self.assertTrue(window.id.startswith(("win32:", "display:")))
             self.assertTrue(window.title)
             self.assertGreaterEqual(window.width, 64)
             self.assertGreaterEqual(window.height, 64)
+        self.assertTrue(any(window.kind == 'display' for window in list_windows()))
 
 
 if __name__ == "__main__":
     unittest.main()
-

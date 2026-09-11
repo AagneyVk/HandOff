@@ -11,11 +11,13 @@ class WindowsCaptureTests(unittest.TestCase):
         import tkinter as tk
         from host.windows.capture import grab, identity
         from host.windows.window_catalog import list_windows
-        from host.windows.input_backend import tap
+        from host.windows.input_backend import drag, tap, text
         root = tk.Tk()
         root.title('HandOff native capture fixture')
         root.geometry('320x240+50+50')
         root.configure(bg='#14b450')
+        entry = tk.Entry(root)
+        entry.place(x=10, y=10, width=120, height=25)
         try:
             root.update()
             selected = next(w for w in list_windows() if w.title == root.title())
@@ -33,6 +35,9 @@ class WindowsCaptureTests(unittest.TestCase):
             self.assertEqual(image.size, (320, 240))
             red, green, blue = image.getpixel((160, 120))
             self.assertLess(red, 40); self.assertGreater(green, 150); self.assertLess(blue, 110)
+            display = next(w for w in list_windows() if w.kind == 'display')
+            desktop = grab(display.id, identity(display.id))
+            self.assertEqual(desktop.size, (display.width, display.height))
             # The visible capture dimensions and the input client dimensions must agree.
             with self.assertRaises(ValueError): tap(selected.id, .5, .5, (1, 1))
             clicked = []
@@ -51,6 +56,14 @@ class WindowsCaptureTests(unittest.TestCase):
             self.assertTrue(clicked, 'Native input did not reach the captured window')
             self.assertLess(abs(clicked[0][0] - 160), 3)
             self.assertLess(abs(clicked[0][1] - 120), 3)
+            dragged = []
+            root.bind('<ButtonRelease-1>', lambda event: dragged.append((event.x, event.y)))
+            drag(selected.id, .25, .5, .75, .5, (320, 240)); root.update()
+            self.assertTrue(dragged)
+            self.assertLess(abs(dragged[-1][0] - 239), 4)
+            entry.focus_set(); root.update()
+            text(selected.id, 'Héllo', (320, 240)); root.update()
+            self.assertEqual(entry.get(), 'Héllo')
         finally:
             root.destroy()
         with self.assertRaises(ValueError): grab(selected.id, pid)
@@ -82,5 +95,8 @@ class X11CaptureTests(unittest.TestCase):
             self.assertEqual(image.size, (320, 240))
             red, green, blue = image.getpixel((160, 120))
             self.assertLess(red, 40); self.assertGreater(green, 150); self.assertLess(blue, 110)
+            display_target = next(item for item in list_windows() if item.kind == 'display')
+            desktop = grab(display_target.id, identity(display_target.id))
+            self.assertEqual(desktop.size, (d.screen().width_in_pixels, d.screen().height_in_pixels))
         finally:
             overlay.destroy(); win.destroy(); d.sync(); d.close()

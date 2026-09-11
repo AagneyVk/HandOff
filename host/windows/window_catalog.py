@@ -20,6 +20,7 @@ class WindowInfo:
     app: str
     width: int
     height: int
+    kind: str = "window"
 
     def payload(self) -> dict:
         return asdict(self)
@@ -63,6 +64,22 @@ def list_windows() -> list[WindowInfo]:
     user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     user32.GetWindowThreadProcessId.restype = wintypes.DWORD
     windows: list[WindowInfo] = []
+    monitor_proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HANDLE, wintypes.HDC,
+                                           ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+
+    def monitor_callback(monitor, _dc, rect_ptr, _lparam):
+        rect = rect_ptr.contents
+        width, height = rect.right - rect.left, rect.bottom - rect.top
+        if width > 0 and height > 0:
+            windows.append(WindowInfo(
+                id=f"display:{int(monitor)}", title=f"Entire display · {width} × {height}",
+                app="Display", width=width, height=height, kind="display",
+            ))
+        return True
+
+    monitor_ref = monitor_proc_type(monitor_callback)
+    if not user32.EnumDisplayMonitors(0, None, monitor_ref, 0):
+        raise ctypes.WinError()
     enum_proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
     def callback(hwnd, _lparam):
@@ -98,6 +115,26 @@ def list_windows() -> list[WindowInfo]:
     return windows
 
 
+def resolve_display(display_id: str) -> tuple[int, int, int, int]:
+    if not isinstance(display_id, str) or not display_id.startswith("display:"):
+        raise ValueError("not a Windows HandOff display id")
+    try: wanted = int(display_id.split(":", 1)[1])
+    except ValueError as exc: raise ValueError("invalid display id") from exc
+    if wanted <= 0: raise ValueError("invalid display id")
+    user32 = ctypes.windll.user32
+    found = []
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HANDLE, wintypes.HDC,
+                                      ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+    def callback(monitor, _dc, rect_ptr, _data):
+        if int(monitor) == wanted:
+            r = rect_ptr.contents; found.append((r.left, r.top, r.right - r.left, r.bottom - r.top))
+        return True
+    ref = callback_type(callback)
+    user32.EnumDisplayMonitors(0, None, ref, 0)
+    if not found: raise ValueError("The selected display is no longer connected.")
+    return found[0]
+
+
 def resolve_hwnd(window_id: str) -> int:
     if not window_id.startswith("win32:"):
         raise ValueError("not a Windows HandOff window id")
@@ -105,4 +142,3 @@ def resolve_hwnd(window_id: str) -> int:
     if hwnd <= 0:
         raise ValueError("invalid HWND")
     return hwnd
-

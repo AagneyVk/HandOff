@@ -11,7 +11,7 @@ class WindowsV1HostTests(unittest.TestCase):
         with patch("host.windows.v1_host.list_windows", return_value=[fake]):
             self.assertEqual(v1_host.snapshot(), [{
                 "id": "win32:7", "title": "Browser", "app": "browser.exe",
-                "width": 1280, "height": 720,
+                "width": 1280, "height": 720, "kind": "window",
             }])
 
     def test_host_name_is_nonempty(self):
@@ -20,4 +20,3 @@ class WindowsV1HostTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

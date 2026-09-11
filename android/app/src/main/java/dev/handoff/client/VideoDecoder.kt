@@ -11,6 +11,7 @@ class VideoDecoder(private val surface: Surface, val width: Int, val height: Int
     private val codec = MediaCodec.createDecoderByType("video/avc")
     init {
         try {
+            require(width <= 1920 && height <= 1080) { "Unsupported video dimensions" }
             val format = MediaFormat.createVideoFormat("video/avc", width, height)
             format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, Wire.MAX_PACKET)
             if (Build.VERSION.SDK_INT >= 30) format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)

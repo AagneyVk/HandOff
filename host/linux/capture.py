@@ -26,7 +26,10 @@ def pid(display, win):
 
 def identity(window_id):
     d = connection()
-    try: return pid(d, window(d, window_id))
+    try:
+        if window_id == 'xdisplay:0':
+            screen = d.screen(); return ('display', screen.width_in_pixels, screen.height_in_pixels)
+        return pid(d, window(d, window_id))
     finally: d.close()
 
 
@@ -35,7 +38,9 @@ def list_windows():
     d = connection()
     try:
         prop = d.screen().root.get_full_property(d.intern_atom('_NET_CLIENT_LIST'), X.AnyPropertyType)
-        result = []
+        screen = d.screen()
+        result = [WindowInfo('xdisplay:0', f'Entire display · {screen.width_in_pixels} × {screen.height_in_pixels}',
+                             'Display', screen.width_in_pixels, screen.height_in_pixels, 'display')]
         for id_ in prop.value if prop is not None else []:
             try:
                 win = d.create_resource_object('window', int(id_))
@@ -58,6 +63,12 @@ def grab(window_id, expected_pid):
     d = connection()
     pixmap = None
     try:
+        if window_id == 'xdisplay:0':
+            screen = d.screen()
+            if identity(window_id) != expected_pid: raise ValueError('The selected display changed. Share it again.')
+            root = screen.root; geom = root.get_geometry(); attrs = root.get_attributes()
+            pixels = root.get_image(0, 0, geom.width, geom.height, X.ZPixmap, 0xFFFFFFFF)
+            return _image(d, geom, attrs, pixels)
         if not d.has_extension('Composite'):
             raise ValueError('XComposite is required to capture only your selected app.')
         win = window(d, window_id)
@@ -76,13 +87,18 @@ def grab(window_id, expected_pid):
         d.sync()
         if failures: raise ValueError('The app cannot be captured.')
         pixels = pixmap.get_image(geom.border_width, geom.border_width, geom.width, geom.height, X.ZPixmap, 0xFFFFFFFF)
-        fmt = next(f for f in d.display.info.pixmap_formats if f.depth == geom.depth)
-        visual = next(v for depth in d.screen().allowed_depths for v in depth.visuals if v.visual_id == attrs.visual)
-        if (fmt.bits_per_pixel not in (24, 32) or d.display.info.image_byte_order != X.LSBFirst
-                or (visual.red_mask, visual.green_mask, visual.blue_mask) != (0xFF0000, 0xFF00, 0xFF)):
-            raise ValueError('This X11 pixel format is not supported.')
-        stride = ((geom.width * fmt.bits_per_pixel + fmt.scanline_pad - 1) // fmt.scanline_pad) * (fmt.scanline_pad // 8)
-        return Image.frombytes('RGB', (geom.width, geom.height), pixels.data, 'raw', 'BGRX' if fmt.bits_per_pixel == 32 else 'BGR', stride)
+        return _image(d, geom, attrs, pixels)
     finally:
         if pixmap: pixmap.free()
         d.close()
+
+
+def _image(d, geom, attrs, pixels):
+    from Xlib import X
+    fmt = next(f for f in d.display.info.pixmap_formats if f.depth == geom.depth)
+    visual = next(v for depth in d.screen().allowed_depths for v in depth.visuals if v.visual_id == attrs.visual)
+    if (fmt.bits_per_pixel not in (24, 32) or d.display.info.image_byte_order != X.LSBFirst
+            or (visual.red_mask, visual.green_mask, visual.blue_mask) != (0xFF0000, 0xFF00, 0xFF)):
+        raise ValueError('This X11 pixel format is not supported.')
+    stride = ((geom.width * fmt.bits_per_pixel + fmt.scanline_pad - 1) // fmt.scanline_pad) * (fmt.scanline_pad // 8)
+    return Image.frombytes('RGB', (geom.width, geom.height), pixels.data, 'raw', 'BGRX' if fmt.bits_per_pixel == 32 else 'BGR', stride)

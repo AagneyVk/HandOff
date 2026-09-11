@@ -13,9 +13,11 @@ class SessionReport {
     private var errors = 0
     private var codec = ""
     private var encoder = ""
-    @Synchronized fun start(codec: String, encoder: String) {
+    private var profile = ""
+    private var target = ""
+    @Synchronized fun start(codec: String, encoder: String, profile: String, target: String) {
         started = SystemClock.elapsedRealtime(); ended = 0; frames = 0; bytes = 0; audio = 0; errors = 0
-        this.codec = codec; this.encoder = encoder
+        this.codec = codec; this.encoder = encoder; this.profile = profile; this.target = target
     }
     @Synchronized fun video(size: Int) { frames++; bytes += size }
     @Synchronized fun audio() { audio++ }
@@ -27,6 +29,7 @@ class SessionReport {
         return JSONObject().put("schema", 1).put("source_revision", BuildConfig.SOURCE_REVISION)
             .put("device_kind", if (emulator) "emulator" else "physical")
             .put("android_api", Build.VERSION.SDK_INT).put("codec", codec).put("encoder", encoder)
+            .put("profile", profile).put("target", target)
             .put("duration_seconds", seconds).put("decoded_frames", frames).put("video_bytes", bytes)
             .put("average_fps", if (seconds > 0) frames / seconds else 0.0)
             .put("audio_chunks_received", audio).put("errors", errors)

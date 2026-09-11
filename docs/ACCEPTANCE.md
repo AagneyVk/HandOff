@@ -5,8 +5,11 @@ Automated build results are recorded in GitHub Actions. These physical-device ch
 - Pair Windows and an Android phone via QR; reject a QR whose certificate pin was altered.
 - Connect again after restarting both apps; remove paired phones on desktop and confirm the old phone loses access.
 - Share a browser and a native editor; confirm visible content is their running state, with no reload or URL recreation.
+- Share each monitor explicitly; confirm only the chosen monitor appears, coordinates map correctly, and app-only approval never expands to a display.
 - Tap the center and all four edges in portrait and landscape; black letterbox bars must never click.
 - Scroll a document; cover the shared app and verify input is rejected rather than clicking the covering app.
+- Test Scroll and Drag modes. On Windows, send ASCII, non-ASCII and emoji text plus Enter; verify typing is rejected when an app-only target loses foreground.
+- Exercise Smooth, Balanced and Sharp on portrait/landscape phones and confirm the stream remains bounded after resize.
 - Resize, minimize and close the app during streaming. Verify a useful error/return state and no stuck capture process.
 - Stop on desktop while the phone is live and while the connection stalls. No new input may be accepted.
 - Disable Wi-Fi, reconnect, and repeat start/return 20 times; check host child processes and phone memory.

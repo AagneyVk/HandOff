@@ -14,9 +14,9 @@ from tests.test_secure_runtime import TestCapture
 
 
 class MediaFixture(TestCapture):
-    def __init__(self, window, pid, prefer_h264=False):
+    def __init__(self, window, pid, prefer_h264=False, profile='balanced'):
         super().__init__(window, pid)
-        self.encoder = VideoEncoder(prefer_h264, candidates=('libx264',))
+        self.encoder = VideoEncoder(prefer_h264, candidates=('libx264',), profile=profile)
     async def frame(self):
         self.frames += 1
         data, width, height, codec, backend = self.encoder.encode(Image.new('RGB', (64, 48), (20, 180, 80)))

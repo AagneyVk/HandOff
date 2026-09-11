@@ -57,6 +57,7 @@ class SecureRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.code = parse_qs(urlparse(self.trust.invitation('127.0.0.1', 47821, self.identity.fingerprint)).query)['code'][0]
         self.pointer = Mock()
         self.host = Host(self.trust, lambda: [WindowInfo('win32:7', 'Test app', 'test', 640, 480)], lambda _: 42, self.pointer, Mock(), TestCapture)
+        self.host.drag, self.host.text, self.host.key = Mock(), Mock(), Mock()
         self.server = await asyncio.start_server(self.host.handle, '127.0.0.1', 0, ssl=self.identity.context)
         # Trust exactly this generated certificate; hostname is deliberately not the trust identity.
         self.context = ssl.create_default_context(cafile=str(self.identity.pem))
@@ -180,3 +181,23 @@ class SecureRuntimeTests(unittest.IsolatedAsyncioTestCase):
         for value in [True, None, float('nan'), float('inf'), [], '0.5', -1, 2]:
             with self.subTest(value=value):
                 with self.assertRaises(ValueError): Connection.number(value, 0, 1)
+
+    async def test_drag_text_and_key_are_scoped_to_displayed_frame(self):
+        await self.pair()
+        session, sequence = await self.start()
+        await self.send('ack', session=session, sequence=sequence)
+        await self.send('drag', session=session, sequence=sequence, x0=.1, y0=.2, x1=.8, y1=.9)
+        await self.send('text', session=session, sequence=sequence, text='Hello')
+        await self.send('key', session=session, sequence=sequence, key='enter')
+        await self.send('stop', session=session)
+        self.assertEqual((await self.receive())['type'], 'stopped')
+        self.host.drag.assert_called_once_with('win32:7', .1, .2, .8, .9, (640, 480))
+        self.host.text.assert_called_once_with('win32:7', 'Hello', (640, 480))
+        self.host.key.assert_called_once_with('win32:7', 'enter', (640, 480))
+
+    async def test_rejects_unknown_stream_profile(self):
+        await self.pair(); self.host.approve('win32:7')
+        await self.send('start', window='win32:7', profile='unbounded')
+        error = await self.receive()
+        self.assertEqual(error['type'], 'error')
+        self.assertIn('profile', error['message'])

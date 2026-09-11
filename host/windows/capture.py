@@ -1,8 +1,8 @@
-"""Client-area PrintWindow capture. Never falls back to whole-screen capture."""
+"""Explicit app-window or monitor capture using bounded Win32 GDI buffers."""
 import ctypes
 from ctypes import wintypes as w
 from PIL import Image
-from .window_catalog import resolve_hwnd
+from .window_catalog import resolve_display, resolve_hwnd
 
 
 def api():
@@ -16,6 +16,8 @@ def api():
         (u, 'PrintWindow', [w.HWND, w.HDC, w.UINT], w.BOOL),
         (g, 'CreateCompatibleDC', [w.HDC], w.HDC),
         (g, 'CreateCompatibleBitmap', [w.HDC, ctypes.c_int, ctypes.c_int], w.HBITMAP),
+        (g, 'BitBlt', [w.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                       w.HDC, ctypes.c_int, ctypes.c_int, w.DWORD], w.BOOL),
         (g, 'SelectObject', [w.HDC, w.HANDLE], w.HANDLE),
         (g, 'DeleteObject', [w.HANDLE], w.BOOL), (g, 'DeleteDC', [w.HDC], w.BOOL),
         (g, 'GetDIBits', [w.HDC, w.HBITMAP, w.UINT, w.UINT, ctypes.c_void_p, ctypes.c_void_p, w.UINT], ctypes.c_int),
@@ -32,6 +34,8 @@ class Header(ctypes.Structure):
 
 
 def identity(window_id):
+    if window_id.startswith('display:'):
+        return ('display', *resolve_display(window_id))
     u, _ = api()
     hwnd = resolve_hwnd(window_id)
     pid = w.DWORD()
@@ -42,6 +46,13 @@ def identity(window_id):
 
 def grab(window_id, expected_pid):
     u, g = api()
+    if window_id.startswith('display:'):
+        left, top, width, height = resolve_display(window_id)
+        if identity(window_id) != expected_pid:
+            raise ValueError('The selected display changed. Share it again.')
+        image = _capture_bitmap(u, g, 0, left, top, width, height, use_print_window=False)
+        if identity(window_id) != expected_pid: raise ValueError('The selected display changed.')
+        return image
     hwnd = resolve_hwnd(window_id)
     if identity(window_id) != expected_pid:
         raise ValueError('The selected app changed. Share it again on your computer.')
@@ -53,7 +64,13 @@ def grab(window_id, expected_pid):
     width, height = rect.right, rect.bottom
     if not (0 < width <= 8192 and 0 < height <= 8192 and width * height <= 16777216):
         raise ValueError('The app window is too large or unavailable. Resize it and try again.')
-    screen = u.GetDC(hwnd)
+    image = _capture_bitmap(u, g, hwnd, 0, 0, width, height, use_print_window=True)
+    if identity(window_id) != expected_pid: raise ValueError('The selected app changed.')
+    return image
+
+
+def _capture_bitmap(u, g, source_handle, left, top, width, height, use_print_window):
+    screen = u.GetDC(source_handle)
     if not screen:
         raise ctypes.WinError(ctypes.get_last_error())
     dc = bitmap = old = None
@@ -65,19 +82,20 @@ def grab(window_id, expected_pid):
         old = g.SelectObject(dc, bitmap)
         if not old or old == ctypes.c_void_p(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
-        # PW_CLIENTONLY | PW_RENDERFULLCONTENT. This call is isolated in a killable process.
-        if not u.PrintWindow(hwnd, dc, 3):
-            raise ValueError('This app does not support window capture.')
+        if use_print_window:
+            # PW_CLIENTONLY | PW_RENDERFULLCONTENT. This call is isolated in a killable process.
+            if not u.PrintWindow(source_handle, dc, 3):
+                raise ValueError('This app does not support window capture.')
+        elif not g.BitBlt(dc, 0, 0, width, height, screen, left, top, 0x00CC0020):
+            raise ValueError('This display could not be captured.')
         g.SelectObject(dc, old); old = None
         header = Header(ctypes.sizeof(Header), width, -height, 1, 32, 0, 0, 0, 0, 0, 0)
         pixels = ctypes.create_string_buffer(width * height * 4)
         if g.GetDIBits(dc, bitmap, 0, height, pixels, ctypes.byref(header), 0) != height:
             raise ctypes.WinError(ctypes.get_last_error())
-        if identity(window_id) != expected_pid:
-            raise ValueError('The selected app changed.')
         return Image.frombytes('RGB', (width, height), pixels.raw, 'raw', 'BGRX')
     finally:
         if old: g.SelectObject(dc, old)
         if bitmap: g.DeleteObject(bitmap)
         if dc: g.DeleteDC(dc)
-        u.ReleaseDC(hwnd, screen)
+        u.ReleaseDC(source_handle, screen)

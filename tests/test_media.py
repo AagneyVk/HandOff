@@ -10,6 +10,11 @@ from host.runtime.audio import pcm16, loopback, CHUNK_BYTES
 
 
 class MediaTests(unittest.TestCase):
+    def test_stream_profiles_bound_resolution(self):
+        image = Image.new('RGB', (3000, 2000), 'green')
+        self.assertEqual(VideoEncoder(profile='smooth').encode(image)[1:3], (1080, 720))
+        self.assertEqual(VideoEncoder(profile='sharp').encode(image)[1:3], (1620, 1080))
+
     def test_unavailable_hardware_falls_back_to_real_jpeg(self):
         encoder = VideoEncoder(True, candidates=('not_a_real_encoder',))
         data, width, height, codec, backend = encoder.encode(Image.new('RGB', (101, 77), 'green'))

@@ -14,9 +14,11 @@ LOG = logging.getLogger('handoff')
 
 
 class Host:
-    def __init__(self, trust, catalog, identity, pointer, scroll, capture=Capture):
+    def __init__(self, trust, catalog, identity, pointer, scroll, capture=Capture,
+                 drag=None, text=None, key=None):
         self.trust, self.catalog, self.identity = trust, catalog, identity
         self.pointer, self.scroll, self.capture_factory = pointer, scroll, capture
+        self.drag, self.text, self.key = drag, text, key
         self.audio_enabled = False
         self.audio_factory = AudioCapture
         self.approved = None
@@ -73,6 +75,7 @@ class Connection:
         self.watch = None
         self.input_count = 0
         self.input_since = time.monotonic()
+        self.profile = 'balanced'
 
     async def send(self, type_, **kwargs):
         async with self.lock:
@@ -135,11 +138,21 @@ class Connection:
             self.session = secrets.token_hex(16)
             self.sequence = self.shown_sequence = 0
             try:
-                self.capture = self.host.capture_factory(*selection, 'h264' in msg.get('codecs', []) if isinstance(msg.get('codecs', []), list) else False)
+                self.profile = msg.get('profile', 'balanced')
+                if self.profile not in ('smooth', 'balanced', 'sharp'):
+                    raise ValueError('Unsupported stream profile.')
+                self.capture = self.host.capture_factory(*selection,
+                    'h264' in msg.get('codecs', []) if isinstance(msg.get('codecs', []), list) else False,
+                    self.profile)
                 first_frame = await self.capture.frame()
                 self.validate_session()
                 codec = first_frame[5] if len(first_frame) > 5 else 'jpeg'
-                await self.send('started', session=self.session, codec=codec,
+                controls = ['tap', 'scroll'] + (['drag'] if self.host.drag else [])
+                if self.host.text and self.host.key: controls += ['text', 'key']
+                fps = {'smooth': 30, 'balanced': 30, 'sharp': 24}[self.profile]
+                await self.send('started', session=self.session, codec=codec, controls=controls,
+                    profile=self.profile, fps=fps,
+                    target='display' if self.selection[0].startswith(('display:', 'xdisplay:')) else 'window',
                     audio=msg.get('audio') is True and self.host.audio_enabled,
                     width=first_frame[1], height=first_frame[2], encoder=first_frame[6] if len(first_frame) > 6 else 'jpeg')
                 self.host.status = 'Sharing with paired phone · Stop sharing to end'
@@ -176,6 +189,26 @@ class Connection:
             else:
                 dy = self.number(msg.get('dy'), -10, 10)
                 self.host.scroll(self.selection[0], x, y, dy, self.source_size)
+        elif type_ == 'drag':
+            self.validate_control(msg)
+            if self.host.drag is None: raise ValueError('Drag control is unavailable on this computer.')
+            x0, y0 = self.number(msg.get('x0'), 0, 1), self.number(msg.get('y0'), 0, 1)
+            x1, y1 = self.number(msg.get('x1'), 0, 1), self.number(msg.get('y1'), 0, 1)
+            self.host.drag(self.selection[0], x0, y0, x1, y1, self.source_size)
+        elif type_ == 'text':
+            self.validate_control(msg)
+            if self.host.text is None: raise ValueError('Remote typing is unavailable on this computer.')
+            value = msg.get('text')
+            if not isinstance(value, str) or not 1 <= len(value) <= 256:
+                raise ValueError('Text must contain 1 to 256 characters.')
+            self.host.text(self.selection[0], value, self.source_size)
+        elif type_ == 'key':
+            self.validate_control(msg)
+            if self.host.key is None: raise ValueError('Remote keys are unavailable on this computer.')
+            name = msg.get('key')
+            if name not in ('backspace', 'tab', 'enter', 'escape', 'left', 'up', 'right', 'down', 'delete'):
+                raise ValueError('Unsupported key.')
+            self.host.key(self.selection[0], name, self.source_size)
         else:
             raise ValueError('Unsupported request')
 
@@ -191,6 +224,15 @@ class Connection:
             raise ValueError('Sharing ended on your computer.')
         if self.host.identity(self.selection[0]) != self.selection[1]:
             raise ValueError('The selected app closed or changed.')
+
+    def validate_control(self, msg):
+        self.validate_session(msg)
+        if type(msg.get('sequence')) is not int or msg['sequence'] != self.shown_sequence or msg['sequence'] != self.sequence or not self.shown_sequence:
+            raise ValueError('Wait for the current frame before controlling the app.')
+        now = time.monotonic()
+        if now - self.input_since > 1: self.input_since, self.input_count = now, 0
+        self.input_count += 1
+        if self.input_count > 60: raise ValueError('Too many input events.')
 
     async def frames(self, frame):
         try:
@@ -209,7 +251,8 @@ class Connection:
                     await asyncio.wait_for(self.writer.drain(), 5)
                 # No second frame may accumulate while Android is decoding/displaying this one.
                 await asyncio.wait_for(self.ack.wait(), 10)
-                await asyncio.sleep(max(0, 1 / (30 if codec == 'h264' else 12) - (time.monotonic() - started)))
+                requested = {'smooth': 30, 'balanced': 30, 'sharp': 24}[self.profile]
+                await asyncio.sleep(max(0, 1 / (requested if codec == 'h264' else min(12, requested)) - (time.monotonic() - started)))
                 frame = await self.capture.frame()
         except asyncio.CancelledError:
             raise

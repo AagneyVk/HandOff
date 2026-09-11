@@ -2,7 +2,7 @@
 
 ## Video
 
-Android requests H.264 by default. The capture worker tests NVIDIA NVENC, Intel Quick Sync, then AMD AMF through PyAV. A codec is advertised only after it produces an immediate Annex B access unit. No hardware encoder means JPEG fallback. Select **Compatibility video (JPEG)** on Android if a device decoder is incompatible. H.264 is paced up to 30 fps, JPEG up to 12 fps; these are caps, not measured device performance. Capture remains PrintWindow/XComposite with CPU pixel readback; this is not a zero-copy GPU capture pipeline. Resize recreates the encoder and decoder.
+Android requests H.264 by default. The capture worker tests NVIDIA NVENC, Intel Quick Sync, then AMD AMF through PyAV. A codec is advertised only after it produces an immediate Annex B access unit. No hardware encoder means JPEG fallback. Select **Compatibility video (JPEG)** on Android if a device decoder is incompatible. Smooth/Balanced run up to 30 fps and Sharp up to 24 fps; JPEG remains capped at 12 fps. These are bounds, not measured performance. Capture uses PrintWindow/BitBlt on Windows and XComposite/root capture on X11 with CPU pixel readback; it is not a zero-copy GPU pipeline. Resize recreates the encoder and decoder.
 
 CI uses libx264 only for its controlled H.264 fixture. Passing that test validates protocol/decode plumbing, not a physical NVENC/QSV/AMF device. The shipped selector never reports libx264 as hardware acceleration.
 

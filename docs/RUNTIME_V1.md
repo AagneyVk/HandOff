@@ -1,5 +1,11 @@
 # Implemented V1 runtime
 
+## RC3 continuity extensions
+
+RC3 makes an explicitly selected monitor a first-class source alongside an app window on Windows and X11. App-only sharing never falls back to a display. `windows` entries include `kind: "window"|"display"`; `started` reports `target`, `profile`, `fps`, and supported `controls`. Display-wide input is permitted only after the desktop owner selects and approves that display.
+
+The Android client offers `smooth` (1280×720, 30 fps, 3 Mbps H.264), `balanced` (1600×1000, 30 fps, 4 Mbps), and `sharp` (1920×1080, 24 fps, 6 Mbps) upper bounds. Source aspect ratio is retained and these are caps, not guaranteed rates. `drag` carries bounded normalized start/end coordinates. Windows additionally advertises `text` (1–256 Unicode characters) and a small allowlist of `key` values. All controls require the current session and latest acknowledged frame; display geometry or app identity changes invalidate them.
+
 ## RC2 media extensions
 
 The JPEG base protocol below remains compatible. RC2 adds `codecs: ["h264", "jpeg"]` and optional `audio: true` to `start`. H.264 uses packet kind **3** (Annex B access unit); PCM audio uses kind **4** (48 kHz stereo signed 16-bit little endian, 960 samples/channel). `frame` includes `codec`; `started` includes `codec`, `encoder`, `width` and `height`. Hardware negotiation fails back to JPEG before the first frame. Each `audio` metadata packet (`session`, `rate`, `channels`, `format: "s16le"`) immediately precedes its PCM packet. `audio.stopped` closes playback independently of video. Both desktop and Android must opt in to all-computer output audio.
@@ -28,11 +34,14 @@ Authenticated messages:
 
 | Request | Response/behavior |
 | --- | --- |
-| `windows` | `windows {windows:[...]}` includes only the locally approved app |
+| `windows` | `windows {windows:[...]}` includes only the locally approved app or display |
 | `start {window}` | `started {session,codec:"jpeg",audio:false}`, then frames |
 | `ack {session,sequence}` | Grants the next frame after Android decoding/display scheduling |
 | `tap {session,sequence,x,y}` | Normalized coordinates in the captured client area |
 | `scroll {session,sequence,x,y,dy}` | Bounded scroll amount |
+| `drag {session,sequence,x0,y0,x1,y1}` | Bounded direct mouse drag |
+| `text {session,sequence,text}` | Windows-only Unicode entry, maximum 256 characters |
+| `key {session,sequence,key}` | Windows-only allowlisted navigation/editing key |
 | `stop {session}` | Releases capture and returns `stopped` |
 | `ping` | `pong` |
 
@@ -42,9 +51,9 @@ Android disconnects on backgrounding, including rotation through activity recrea
 
 ## Capture and input boundaries
 
-Windows: PrintWindow client-area capture, bounded GDI allocations and explicit handle signatures. Some apps return black content. There is no whole-screen fallback. Input requires the target to be foreground, dimensions to match and WindowFromPoint/GetAncestor to resolve to the selected window. OS-global SendInput has an unavoidable focus race; this is not an OS-enforced per-window input sandbox. UIPI restrictions apply.
+Windows: PrintWindow client-area capture or explicit per-monitor BitBlt capture, bounded GDI allocations and explicit handle signatures. Some GPU/DRM app surfaces return black content. Input for app targets requires foreground, matching dimensions and WindowFromPoint/GetAncestor validation. Display targets deliberately cover everything visible on that monitor and therefore allow desktop-wide input. OS-global SendInput has an unavoidable focus race; this is not an OS-enforced per-window input sandbox. UIPI restrictions apply.
 
-X11: XComposite offscreen pixmap capture of the selected client; only supported 24/32-bit TrueColor formats are decoded. Native Wayland is rejected. XTest input is checked against foreground/geometry/point ancestry under a brief server grab. The desktop/session's X server remains trusted.
+X11: XComposite offscreen capture of a selected client or explicit root-display capture; only supported 24/32-bit TrueColor formats are decoded. Native Wayland is rejected. App input is checked against foreground/geometry/point ancestry under a brief server grab. Display sharing permits display-wide XTest input. The desktop/session's X server remains trusted.
 
 ## Primary implementation references
 

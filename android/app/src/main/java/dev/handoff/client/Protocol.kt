@@ -93,7 +93,8 @@ class ProtocolClient(
                 while (generation.get() == epoch) {
                     val msg = readJson(input)
                     when (msg.getString("type")) {
-                        "started" -> { session = msg.getString("session"); report.start(msg.optString("codec"), msg.optString("encoder")) }
+                        "started" -> { session = msg.getString("session"); report.start(msg.optString("codec"),
+                            msg.optString("encoder"), msg.optString("profile", "balanced"), msg.optString("target", "window")) }
                         "stopped" -> { report.stop(); session = null; decoder?.close(); decoder = null; decoderSize = null; player?.close(); player = null }
                         "audio.stopped" -> { player?.close(); player = null }
                         "audio" -> {
@@ -120,7 +121,7 @@ class ProtocolClient(
                             val (kind, bytes) = Wire.read(input)
                             if (kind == 3) {
                                 val width = msg.getInt("width"); val height = msg.getInt("height")
-                                require(width in 2..1600 && height in 2..1000 && msg.getString("codec") == "h264") { "Invalid H.264 format" }
+                                require(width in 2..1920 && height in 2..1080 && msg.getString("codec") == "h264") { "Invalid H.264 format" }
                                 if (decoder == null || decoderSize != (width to height)) {
                                     decoder?.close(); decoder = null
                                     val deadline = SystemClock.elapsedRealtime() + 3000
@@ -138,7 +139,7 @@ class ProtocolClient(
                             require(kind == 2) { "Missing video frame" }
                             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                            require(options.outWidth in 1..1600 && options.outHeight in 1..1000 && options.outMimeType == "image/jpeg") { "Unsupported video dimensions" }
+                            require(options.outWidth in 1..1920 && options.outHeight in 1..1080 && options.outMimeType == "image/jpeg") { "Unsupported video dimensions" }
                             require(options.outWidth == msg.getInt("width") && options.outHeight == msg.getInt("height")) { "Video dimensions changed unexpectedly" }
                             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: error("Could not decode video")
                             report.video(bytes.size)
@@ -200,13 +201,19 @@ class ProtocolClient(
             state(generation.get(), "Connection is busy. Reconnect to continue.")
         }
     }
-    fun start(window: String, compatibility: Boolean = false, audio: Boolean = false) {
+    fun start(window: String, compatibility: Boolean = false, audio: Boolean = false, profile: String = "balanced") {
         audioAllowed = audio
-        send("start", JSONObject().put("window", window).put("codecs", org.json.JSONArray(if (compatibility) listOf("jpeg") else listOf("h264", "jpeg"))).put("audio", audio))
+        send("start", JSONObject().put("window", window)
+            .put("codecs", org.json.JSONArray(if (compatibility) listOf("jpeg") else listOf("h264", "jpeg")))
+            .put("audio", audio).put("profile", profile))
     }
     fun stop() = send("stop", includeSession = true)
     fun tap(x: Float, y: Float, sequence: Int) = send("tap", JSONObject().put("x", x).put("y", y).put("sequence", sequence), true)
     fun scroll(x: Float, y: Float, dy: Float, sequence: Int) = send("scroll", JSONObject().put("x", x).put("y", y).put("dy", dy).put("sequence", sequence), true)
+    fun drag(x0: Float, y0: Float, x1: Float, y1: Float, sequence: Int) = send("drag",
+        JSONObject().put("x0", x0).put("y0", y0).put("x1", x1).put("y1", y1).put("sequence", sequence), true)
+    fun text(value: String, sequence: Int) = send("text", JSONObject().put("text", value.take(256)).put("sequence", sequence), true)
+    fun key(value: String, sequence: Int) = send("key", JSONObject().put("key", value).put("sequence", sequence), true)
     @Synchronized fun close() {
         report.stop()
         generation.incrementAndGet()
