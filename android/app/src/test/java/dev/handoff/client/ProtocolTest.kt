@@ -25,6 +25,12 @@ class ProtocolTest {
             fail("Truncated packet accepted")
         } catch (_: EOFException) { }
     }
+    @Test fun binaryPacketRoundTrip() {
+        val buffer = ByteArrayOutputStream()
+        Wire.write(DataOutputStream(buffer), 3, byteArrayOf(0, 0, 1, 0x67))
+        val (kind, data) = Wire.read(DataInputStream(ByteArrayInputStream(buffer.toByteArray())))
+        assertEquals(3, kind); assertArrayEquals(byteArrayOf(0, 0, 1, 0x67), data)
+    }
     @Test fun oversizedPacketRejectedBeforeAllocation() {
         val bytes = ByteArrayOutputStream()
         DataOutputStream(bytes).writeInt(Int.MAX_VALUE)

@@ -39,5 +39,17 @@ async def read(reader, timeout=30):
     return await asyncio.wait_for(receive(), timeout)
 
 
+async def read_binary(reader, expected_kind, timeout=10):
+    async def receive():
+        size = struct.unpack('!I', await reader.readexactly(4))[0]
+        if not 1 < size <= MAX_PACKET:
+            raise ValueError('Invalid media packet size')
+        data = await reader.readexactly(size)
+        if data[0] != expected_kind:
+            raise ValueError('Unexpected media packet')
+        return data[1:]
+    return await asyncio.wait_for(receive(), timeout)
+
+
 def message(type_, **kwargs):
     return dict(v=1, type=type_, **kwargs)

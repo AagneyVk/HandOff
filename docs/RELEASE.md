@@ -12,13 +12,16 @@ Enable **Share computer audio (all apps, never microphone)** on desktop and **Pl
 
 PCM is 48 kHz, stereo, signed 16-bit little endian in 20 ms chunks. Capture and playback queues are bounded. Old capture chunks are discarded instead of accumulating delay. Return/disconnect ends capture and playback. Audio and video currently use the same encrypted TCP connection; severe network congestion can interrupt sound, and there is no shared media-clock A/V synchronization yet. For Linux, a PulseAudio-compatible server (including PipeWire's compatibility service) is required.
 
+Android → desktop audio uses `AudioPlaybackCaptureConfiguration` on Android 10+. Android presents the `RECORD_AUDIO` runtime permission even though HandOff configures playback capture rather than the microphone. Only media/game usages from applications whose capture policy allows it are available; DRM and opted-out applications can be silent. Denied or unavailable audio does not grant microphone fallback.
+
 ## Physical validation
 
 1. Install an APK from a successful **Framework tests** run and its matching desktop source/executable.
 2. Share an app, request normal video and audio, and use it for at least 60 seconds. Confirm the displayed encoder is hardware H.264.
 3. Check audible sound, visible content, taps/scroll, resize and repeated Return/reconnect. Verify stopping desktop sharing prevents subsequent input. Turn audio off and confirm sound stops.
-4. Return, then tap **Export session report** on Android. This report contains counts and the exact source revision, not pairing credentials or window titles.
-5. Run `python tools/validate_session.py handoff-session.json --revision <tested SHA>`.
+4. Start **Share phone to computer**, approve both an individual app and the full display in separate sessions, and check H.264 video, rotation/letterboxing, optional playback audio and repeated stop/restart. Enable Accessibility and verify mouse tap/drag/wheel/text; disable it and verify the desktop becomes view-only.
+5. Return, then tap **Export session report** on Android. This report contains counts and the exact source revision, not pairing credentials or window titles.
+6. Run `python tools/validate_session.py handoff-session.json --revision <tested SHA>`.
 
 The checker requires a reported physical Android device, a hardware encoder, at least 60 seconds/600 decoded frames, average decoding rate ≥10 fps, audio packets and no recorded connection errors. These are minimum evidence gates, not quality certification. Device classification is a heuristic and the JSON is not cryptographically attested. Packet reception alone does not prove audible playback, image quality or low input latency; manual checks are required.
 

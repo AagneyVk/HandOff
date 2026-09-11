@@ -23,6 +23,10 @@ object Wire {
         require(data.size in 1..16384)
         output.writeInt(data.size + 1); output.writeByte(1); output.write(data); output.flush()
     }
+    fun write(output: DataOutputStream, kind: Int, data: ByteArray) {
+        require(kind in 2..4 && data.size in 1 until MAX_PACKET)
+        output.writeInt(data.size + 1); output.writeByte(kind); output.write(data); output.flush()
+    }
 }
 
 data class Pairing(val host: String, val port: Int, val pin: String, val code: String) {

@@ -1,6 +1,6 @@
 # HandOff
 
-Continue a running desktop app—or your explicitly selected display—on Android over your local network. Work keeps running on the computer while HandOff sends its live pixels and maps phone interaction back to it.
+Continue a running app or display in either direction between Android and your computer over the local network. The source device keeps running it; HandOff carries live pixels, permitted playback audio and scoped control through one pinned-TLS connection.
 
 ## Get started
 
@@ -12,6 +12,8 @@ Continue a running desktop app—or your explicitly selected display—on Androi
 6. Choose the computer's LAN address and click **New pairing code**. In Android HandOff, tap **Pair with QR code** and scan it.
 7. Pick Smooth, Balanced or Sharp and tap **Continue here**. Tap to click, use Scroll mode for reels/documents, or Drag mode for sliders and direct manipulation. Windows also supports sending text and Enter from the phone. Keep an app-only target foreground to allow input.
 8. Tap **Return** on Android or **Stop sharing** on the computer to end the session.
+
+For Android → computer, connect the paired devices and choose **Share phone to computer**. Android's system dialog lets you approve one app or the whole display each time. The computer opens a dedicated phone window. To control it with mouse, wheel and keyboard, tap **Enable phone control** first and explicitly enable the HandOff Accessibility service. Phone media audio is optional and requires Android's audio-record permission because that is the permission Android uses for playback capture; HandOff configures playback capture, not microphone input.
 
 The code expires after five minutes and works once. Afterwards, the phone can reconnect using its saved pairing. **Remove all paired phones** revokes access. Camera permission is used only by the QR scanner; **Use a pairing link** is also available.
 
@@ -26,12 +28,15 @@ The code expires after five minutes and works once. Afterwards, the phone can re
 - Bounded media framing, decoder dimension checks, one video frame in flight, capture-process deadlines and network timeouts.
 - Tap, wheel-style scrolling and true drag gestures; Windows Unicode text/navigation keys. App targets retain foreground/occlusion checks, while display targets are explicitly authorized for desktop-wide control.
 - Smooth (1280×720/30), Balanced (1600×1000/30) and Sharp (1920×1080/24) bounded stream profiles. One-frame backpressure prevents lag accumulation.
+- Android app/full-display capture through MediaProjection, hardware H.264 encoding, one-frame keyframe backpressure and an aspect-correct desktop phone viewer.
+- Explicit Android Accessibility control for desktop tap, drag, wheel scrolling, text, Back, Home, Enter and editing actions. It is never enabled or invoked merely by pairing.
+- Optional Android 10+ media/game playback capture to the computer. Apps can opt out and protected/DRM content can remain silent or black.
 - Return, disconnect, closed-window/capture error handling, and automatic disconnect when Android goes into the background.
 - Windows executable and Android debug APK build artifacts.
 
 ## Current release scope
 
-This is **RC3**. Hardware H.264 is attempted on supported GPUs, with JPEG fallback. Physical GPU/audio-device compatibility must be measured on your own devices; CI validates software-generated H.264 and PCM fixtures on Android. Computer audio includes all apps and is off by default. Per-app audio isolation, tightly synchronized A/V, file drag-and-drop, Android-as-source and native Wayland remain outside this build. Linux remote text entry is not advertised because portable Unicode injection is not reliable across X11 keyboard maps.
+This is **RC4**. Both directions are implemented, but physical GPU/audio/device compatibility must still be measured on your own hardware. CI validates the encrypted media protocols, H.264 encode/decode plumbing, native desktop capture/input, Android build/lint and lifecycle behavior that can run without bypassing Android's mandatory projection/accessibility consent. Per-app desktop audio isolation, tightly synchronized A/V, file drag-and-drop and native Wayland remain outside this build. Linux remote text entry is not advertised because portable Unicode injection is not reliable across X11 keyboard maps.
 
 See [media, physical validation and signing](docs/RELEASE.md). The signed-release workflow is ready but requires your publisher credentials and physical session evidence. Ordinary CI artifacts are still debug-signed Android and unsigned Windows.
 

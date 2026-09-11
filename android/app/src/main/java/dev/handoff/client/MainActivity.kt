@@ -1,7 +1,13 @@
 package dev.handoff.client
 
 import android.graphics.Bitmap
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.provider.Settings
 import android.view.WindowManager
 import android.view.SurfaceView
 import android.view.SurfaceHolder
@@ -33,11 +39,13 @@ import com.journeyapps.barcodescanner.ScanOptions
 
 class MainActivity : ComponentActivity() {
     private var background: (() -> Unit)? = null
+    private var projectionFlow = false
+    fun keepProjectionConnection(value: Boolean) { projectionFlow = value }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { HandOffApp(this) { background = it } }
     }
-    override fun onStop() { background?.invoke(); super.onStop() }
+    override fun onStop() { if (!projectionFlow) background?.invoke(); super.onStop() }
 }
 private data class AppWindow(val id: String, val title: String, val app: String, val kind: String)
 
@@ -64,6 +72,9 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
     var keyboardSupported by remember { mutableStateOf(false) }
     var textEntry by remember { mutableStateOf("") }
     var profile by remember { mutableStateOf("balanced") }
+    var phoneSharing by remember { mutableStateOf(false) }
+    var phoneAudio by remember { mutableStateOf(false) }
+    var projectionPending by remember { mutableStateOf(false) }
     val client = remember {
         ProtocolClient(store, onState = { value ->
             status = value
@@ -88,8 +99,17 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                     status = if (videoCodec == "h264") "H.264 · ${msg.optString("encoder")}" else "Compatibility video · JPEG"
                 }
                 "audio.stopped" -> { status = msg.optString("message", "Audio stopped") }
+                "source.ready" -> { phoneSharing = true; projectionPending = false; status = "Phone is live on your computer" }
+                "source.stopped", "source.localStopped" -> {
+                    phoneSharing = false; projectionPending = false; activity.keepProjectionConnection(false)
+                    status = msg.optString("message", "Phone sharing stopped")
+                }
                 "stopped" -> { live = false; busy = false; bitmap = null; status = msg.optString("message", "Returned to computer") }
-                "error" -> { busy = false; status = msg.optString("message", "Try again") }
+                "error" -> {
+                    busy = false
+                    if (projectionPending) { projectionPending = false; activity.keepProjectionConnection(false) }
+                    status = msg.optString("message", "Try again")
+                }
             }
         })
     }
@@ -114,6 +134,29 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
         }
     }
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let { pair(it) } }
+    val projectionLauncher = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val bounds = if (android.os.Build.VERSION.SDK_INT >= 30) activity.windowManager.maximumWindowMetrics.bounds
+                         else android.graphics.Rect(0, 0, context.resources.displayMetrics.widthPixels, context.resources.displayMetrics.heightPixels)
+            val rawWidth = bounds.width(); val rawHeight = bounds.height()
+            val scale = minOf(1f, 1280f / maxOf(rawWidth, rawHeight), 720f / minOf(rawWidth, rawHeight))
+            val width = maxOf(2, (rawWidth * scale).toInt() / 2 * 2)
+            val height = maxOf(2, (rawHeight * scale).toInt() / 2 * 2)
+            client.beginPhoneShare(context, result.resultCode, result.data!!, width, height, phoneAudio)
+            status = "Starting secure phone stream…"
+        } else {
+            projectionPending = false; activity.keepProjectionConnection(false); status = "Phone sharing cancelled"
+        }
+    }
+    fun requestProjection() {
+        projectionPending = true; activity.keepProjectionConnection(true)
+        val manager = context.getSystemService(MediaProjectionManager::class.java)
+        projectionLauncher.launch(manager.createScreenCaptureIntent())
+    }
+    val audioPermission = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) requestProjection()
+        else { projectionPending = false; activity.keepProjectionConnection(false); status = "Audio permission denied; turn phone audio off to share video only" }
+    }
     BackHandler(live) { client.stop() }
     val dark = androidx.compose.foundation.isSystemInDarkTheme()
     val scheme = if (dark) darkColorScheme(primary = Color(0xFF77D8C4), background = Color(0xFF111918), surface = Color(0xFF182321))
@@ -198,6 +241,28 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                         }
                     }
                     if (connected) {
+                        item {
+                            ElevatedCard(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text("Use phone on computer", style = MaterialTheme.typography.titleLarge)
+                                    Text("Android will ask whether to share one app or the whole phone. Nothing starts without that system confirmation.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Checkbox(phoneAudio, { phoneAudio = it }, enabled = !phoneSharing && !projectionPending)
+                                        Text("Share phone media audio")
+                                    }
+                                    Text(if (RemoteControlService.enabled()) "Computer control is enabled" else "Viewing works now. Enable HandOff Accessibility for mouse and keyboard control.", style = MaterialTheme.typography.bodySmall)
+                                    if (!RemoteControlService.enabled()) TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("Enable phone control") }
+                                    if (phoneSharing) Button(onClick = { PhoneProjectionService.stop(context) }, modifier = Modifier.fillMaxWidth()) { Text("Return to phone") }
+                                    else Button(onClick = {
+                                        if (phoneAudio && androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+                                            audioPermission.launch(Manifest.permission.RECORD_AUDIO)
+                                        else requestProjection()
+                                    }, enabled = !projectionPending && !live, modifier = Modifier.fillMaxWidth()) {
+                                        Text(if (projectionPending) "Waiting for Android…" else "Share phone to computer")
+                                    }
+                                }
+                            }
+                        }
                         item {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Checkbox(checked = compatibility, onCheckedChange = { compatibility = it }, enabled = !busy)

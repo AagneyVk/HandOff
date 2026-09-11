@@ -91,7 +91,7 @@ Android is initially a receiver/controller. It owns:
 - touch -> normalized input mapping
 - latency telemetry
 
-Android -> desktop capture is a later milestone and should live behind the same conceptual capture/session interfaces.
+Android -> desktop uses the same conceptual capture/session interfaces: MediaProjection and MediaCodec provide an explicitly consented H.264 source, while the desktop viewer returns session-bound control through an explicitly enabled Accessibility service.
 
 ## Security model
 
@@ -107,4 +107,3 @@ input -> network -> inject -> app render -> capture -> display
 ```
 
 The second metric is the important product metric: **input-to-visible-response latency**.
-

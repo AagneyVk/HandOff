@@ -1,6 +1,8 @@
 package dev.handoff.client
 
 import android.graphics.Bitmap
+import android.content.Context
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
@@ -18,6 +20,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import kotlin.concurrent.thread
@@ -43,6 +46,13 @@ class ProtocolClient(
     @Volatile private var surface: Surface? = null
     @Volatile private var audioAllowed = false
     @Volatile private var activeAudio: AudioPlayer? = null
+    @Volatile private var sourceSession: String? = null
+    @Volatile private var sourceContext: Context? = null
+    private val sourceSequence = AtomicLong()
+    private val sourceAudioPending = AtomicBoolean()
+    private data class ProjectionRequest(val context: Context, val resultCode: Int, val data: Intent,
+        val width: Int, val height: Int, val audio: Boolean)
+    @Volatile private var projectionRequest: ProjectionRequest? = null
     fun setSurface(value: Surface?) { surface = value }
 
     init { heartbeat.scheduleAtFixedRate({ if (writer != null) send("ping") }, 8, 8, TimeUnit.SECONDS) }
@@ -97,6 +107,36 @@ class ProtocolClient(
                             msg.optString("encoder"), msg.optString("profile", "balanced"), msg.optString("target", "window")) }
                         "stopped" -> { report.stop(); session = null; decoder?.close(); decoder = null; decoderSize = null; player?.close(); player = null }
                         "audio.stopped" -> { player?.close(); player = null }
+                        "source.ready" -> {
+                            val request = projectionRequest ?: error("Phone projection request expired")
+                            sourceSession = msg.getString("session"); sourceSequence.set(0)
+                            PhoneProjectionService.start(request.context, request.resultCode, request.data,
+                                request.width, request.height, request.audio)
+                        }
+                        "source.ack" -> {
+                            require(msg.getString("session") == sourceSession) { "Stale phone frame acknowledgement" }
+                            PhoneSourceBus.requestFrame(); continue
+                        }
+                        "source.stopped" -> {
+                            sourceSession = null; projectionRequest = null
+                        }
+                        "phone.stop" -> { sourceContext?.let { PhoneProjectionService.stop(it) }; continue }
+                        "phone.tap" -> {
+                            requirePhoneSession(msg); RemoteControlService.tap(msg.getDouble("x").toFloat(), msg.getDouble("y").toFloat()); continue
+                        }
+                        "phone.drag" -> {
+                            requirePhoneSession(msg); RemoteControlService.drag(msg.getDouble("x0").toFloat(), msg.getDouble("y0").toFloat(),
+                                msg.getDouble("x1").toFloat(), msg.getDouble("y1").toFloat()); continue
+                        }
+                        "phone.scroll" -> {
+                            requirePhoneSession(msg); RemoteControlService.scroll(msg.getDouble("x").toFloat(), msg.getDouble("y").toFloat(), msg.getDouble("dy").toFloat()); continue
+                        }
+                        "phone.text" -> {
+                            requirePhoneSession(msg); msg.getString("text").takeIf { it.length <= 256 }?.let { RemoteControlService.text(it) }; continue
+                        }
+                        "phone.key" -> {
+                            requirePhoneSession(msg); RemoteControlService.key(msg.getString("key")); continue
+                        }
                         "audio" -> {
                             require(msg.getString("session") == session && audioAllowed) { "Unexpected audio session" }
                             require(msg.getInt("rate") == 48000 && msg.getInt("channels") == 2 && msg.getString("format") == "s16le") { "Unsupported audio format" }
@@ -166,7 +206,11 @@ class ProtocolClient(
                 try { player?.close() } catch (_: Exception) {}
                 try { raw.close() } catch (_: Exception) { }
                 synchronized(this) {
-                    if (generation.get() == epoch) { writer = null; socket = null; session = null }
+                    if (generation.get() == epoch) {
+                        sourceContext?.let { if (sourceSession != null) PhoneProjectionService.stop(it) }
+                        PhoneSourceBus.sink = null; sourceSession = null; projectionRequest = null
+                        writer = null; socket = null; session = null
+                    }
                 }
             }
         }
@@ -176,6 +220,46 @@ class ProtocolClient(
         val (kind, data) = Wire.read(input)
         require(kind == 1) { "Expected control message" }
         return JSONObject(String(data, Charsets.UTF_8)).also { require(it.getInt("v") == 1) { "Unsupported host version" } }
+    }
+
+    private fun requirePhoneSession(msg: JSONObject) {
+        require(sourceSession != null && msg.getString("session") == sourceSession) { "Stale phone control session" }
+    }
+
+    fun beginPhoneShare(context: Context, resultCode: Int, data: Intent, width: Int, height: Int, audio: Boolean) {
+        require(width in 2..1920 && height in 2..1920 && width * height <= 1920 * 1080)
+        sourceContext = context.applicationContext
+        projectionRequest = ProjectionRequest(context.applicationContext, resultCode, data, width, height, audio)
+        PhoneSourceBus.sink = object : PhoneSourceBus.Sink {
+            override fun video(bytes: ByteArray) = sendSourceMedia("source.frame", 3, bytes,
+                JSONObject().put("sequence", sourceSequence.incrementAndGet()))
+            override fun audio(bytes: ByteArray) {
+                if (sourceAudioPending.compareAndSet(false, true)) sendSourceMedia("source.audio", 4, bytes,
+                    JSONObject().put("rate", 48000).put("channels", 2).put("format", "s16le")) { sourceAudioPending.set(false) }
+            }
+            override fun stopped(message: String) {
+                val active = sourceSession
+                if (active != null) send("source.stop", JSONObject().put("session", active))
+                main.post { if (!disposed) onMessage(JSONObject().put("type", "source.localStopped").put("message", message)) }
+            }
+        }
+        send("source.start", JSONObject().put("width", width).put("height", height).put("codec", "h264")
+            .put("audio", audio).put("controls", RemoteControlService.enabled()))
+    }
+
+    private fun sendSourceMedia(type: String, kind: Int, bytes: ByteArray, payload: JSONObject, done: () -> Unit = {}) {
+        val epoch = generation.get(); val active = sourceSession ?: return done()
+        try {
+            output.execute {
+                try {
+                    if (generation.get() != epoch || sourceSession != active) return@execute
+                    val out = writer ?: return@execute
+                    payload.put("v", 1).put("type", type).put("session", active)
+                    Wire.write(out, payload.toString().toByteArray(Charsets.UTF_8)); Wire.write(out, kind, bytes)
+                } catch (_: Exception) { synchronized(this) { try { socket?.close() } catch (_: Exception) {} } }
+                finally { done() }
+            }
+        } catch (_: RejectedExecutionException) { done() }
     }
 
     fun send(type: String, payload: JSONObject = JSONObject(), includeSession: Boolean = false) {
@@ -216,6 +300,8 @@ class ProtocolClient(
     fun key(value: String, sequence: Int) = send("key", JSONObject().put("key", value).put("sequence", sequence), true)
     @Synchronized fun close() {
         report.stop()
+        sourceContext?.let { if (sourceSession != null) PhoneProjectionService.stop(it) }
+        PhoneSourceBus.sink = null; sourceSession = null; projectionRequest = null
         generation.incrementAndGet()
         try { socket?.close() } catch (_: Exception) { }
         socket = null; writer = null; session = null

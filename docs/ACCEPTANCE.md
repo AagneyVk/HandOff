@@ -10,6 +10,9 @@ Automated build results are recorded in GitHub Actions. These physical-device ch
 - Scroll a document; cover the shared app and verify input is rejected rather than clicking the covering app.
 - Test Scroll and Drag modes. On Windows, send ASCII, non-ASCII and emoji text plus Enter; verify typing is rejected when an app-only target loses foreground.
 - Exercise Smooth, Balanced and Sharp on portrait/landscape phones and confirm the stream remains bounded after resize.
+- From Android, approve one-app projection and whole-display projection separately. Confirm the desktop viewer preserves aspect ratio and closes from the phone, notification/system projection chip, desktop window, screen lock and network loss.
+- With Accessibility disabled, confirm phone sharing is view-only. Enable it explicitly and test desktop tap, drag, wheel, text, Back/Home/Enter/Backspace. Disable it during a session and confirm control stops.
+- Request Android playback audio with an allowed media app, an opted-out app and protected content. No path may substitute microphone capture.
 - Resize, minimize and close the app during streaming. Verify a useful error/return state and no stuck capture process.
 - Stop on desktop while the phone is live and while the connection stalls. No new input may be accepted.
 - Disable Wi-Fi, reconnect, and repeat start/return 20 times; check host child processes and phone memory.

@@ -1,5 +1,13 @@
 # Implemented V1 runtime
 
+## RC4 Android → desktop
+
+After the phone has authenticated to the pinned desktop host, it may request `source.start {width,height,codec:"h264",audio,controls}`. The desktop returns a random reverse `session` and opens a dedicated viewer. Android then invokes the OS MediaProjection consent screen; Android 14+ can let the user select one app or the full display. Capture runs in a visible `mediaProjection` foreground service and ends when the system chip, notification action, phone UI, desktop viewer, connection or device lock stops it.
+
+Each `source.frame {session,sequence}` is followed atomically by one Annex-B H.264 keyframe. The desktop decodes it with PyAV and returns `source.ack`; Android requests a new synchronization frame only after that acknowledgement, preventing a hidden queue and avoiding broken prediction chains when intermediate encoder output is discarded. Optional `source.audio` packets carry the same bounded PCM format as desktop audio. Android playback capture is limited to Android 10+ media/game usages and applications that permit capture.
+
+Desktop input is returned as `phone.tap`, `phone.drag`, `phone.scroll`, `phone.text`, `phone.key` under the reverse session. Android accepts it only while that session exists. Gesture/text execution additionally requires the user-enabled, non-exported HandOff Accessibility service. Pairing or projection permission does not enable Accessibility. General key injection is intentionally not attempted: Back/Home/Recents, Enter, Backspace and text-field editing use documented accessibility actions; unsupported arrow behavior is ignored.
+
 ## RC3 continuity extensions
 
 RC3 makes an explicitly selected monitor a first-class source alongside an app window on Windows and X11. App-only sharing never falls back to a display. `windows` entries include `kind: "window"|"display"`; `started` reports `target`, `profile`, `fps`, and supported `controls`. Display-wide input is permitted only after the desktop owner selects and approves that display.

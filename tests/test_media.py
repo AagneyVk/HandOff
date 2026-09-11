@@ -34,6 +34,18 @@ class MediaTests(unittest.TestCase):
             self.assertEqual((frames[0].width, frames[0].height), size)
             self.assertGreater(frames[0].to_image().getpixel((20, 20))[1], 160)
 
+    @unittest.skipUnless(importlib.util.find_spec('av'), 'PyAV installed in CI')
+    def test_phone_presenter_decodes_annex_b(self):
+        from unittest.mock import Mock
+        from host.runtime.phone_view import PhonePresenter
+        encoder = VideoEncoder(True, candidates=('libx264',))
+        data = encoder.encode(Image.new('RGB', (64, 48), (20, 180, 80)))[0]
+        presenter = PhonePresenter(Mock(), Mock())
+        owner = object(); presenter.start(owner, 64, 48, False, True)
+        self.assertTrue(presenter.feed_video(data))
+        self.assertEqual(presenter.image.size, (64, 48))
+        presenter.stop(owner)
+
     def test_audio_clamps_nonfinite_and_has_fixed_little_endian_layout(self):
         import numpy as np
         samples = np.zeros((960, 2)); samples[0] = [2, -2]; samples[1] = [float('nan'), .5]

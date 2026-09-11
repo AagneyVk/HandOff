@@ -13,6 +13,7 @@ from tkinter import ttk, messagebox
 
 from .runtime.security import Identity, TrustStore
 from .runtime.server import Host
+from .runtime.phone_view import PhonePresenter
 
 PORT = 47821
 
@@ -51,6 +52,8 @@ class Desktop:
         self.trust = TrustStore(directory)
         catalog, identify, tap, scroll, drag, text, key = backends()
         self.host = Host(self.trust, catalog, identify, tap, scroll, drag=drag, text=text, key=key)
+        self.phone = PhonePresenter(root, self.phone_control)
+        self.host.phone_presenter = self.phone
         self.loop = None
         self.server_task = None
         self.ready = False
@@ -162,6 +165,12 @@ class Desktop:
         if messagebox.askyesno('Remove paired phones', 'Disconnect all phones and require pairing again?'):
             self.host.stop(); self.trust.revoke_all()
 
+    def phone_control(self, owner, type_, **payload):
+        if not self.loop or owner is not self.host.phone_owner or not owner.source_session: return
+        if type_ != 'phone.stop' and not owner.source_controls: return
+        payload['session'] = owner.source_session
+        asyncio.run_coroutine_threadsafe(owner.send(type_, **payload), self.loop)
+
     def poll(self):
         if self.shutting_down: return
         if self.failure:
@@ -179,6 +188,7 @@ class Desktop:
     def close(self):
         self.shutting_down = True
         self.host.stop()
+        self.phone.stop()
         if self.loop and self.server_task:
             with contextlib.suppress(RuntimeError): self.loop.call_soon_threadsafe(self.server_task.cancel)
         self.thread.join(timeout=2)

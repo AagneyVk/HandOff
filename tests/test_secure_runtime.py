@@ -85,6 +85,9 @@ class SecureRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.writer.write(wire.encode(wire.JSON, wire.message(type_, **kwargs)))
         await self.writer.drain()
 
+    async def send_binary(self, kind, data):
+        self.writer.write(wire.encode(kind, data)); await self.writer.drain()
+
     async def receive(self):
         size = struct.unpack('!I', await asyncio.wait_for(self.reader.readexactly(4), 2))[0]
         packet = await self.reader.readexactly(size)
@@ -201,3 +204,28 @@ class SecureRuntimeTests(unittest.IsolatedAsyncioTestCase):
         error = await self.receive()
         self.assertEqual(error['type'], 'error')
         self.assertIn('profile', error['message'])
+
+    async def test_phone_source_video_audio_stop_and_cleanup(self):
+        await self.pair()
+        presenter = Mock(); presenter.feed_video.return_value = True
+        self.host.phone_presenter = presenter
+        await self.send('source.start', width=720, height=1280, codec='h264', audio=True, controls=True)
+        ready = await self.receive(); self.assertEqual(ready['type'], 'source.ready')
+        session = ready['session']
+        await self.send('source.frame', session=session, sequence=1)
+        await self.send_binary(wire.H264, b'\x00\x00\x00\x01\x67fixture')
+        ack = await self.receive(); self.assertEqual((ack['type'], ack['sequence']), ('source.ack', 1))
+        await self.send('source.audio', session=session, rate=48000, channels=2, format='s16le')
+        await self.send_binary(wire.PCM, bytes(3840))
+        await self.send('source.stop', session=session)
+        self.assertEqual((await self.receive())['type'], 'source.stopped')
+        presenter.start.assert_called_once()
+        self.assertEqual(presenter.start.call_args.args[1:], (720, 1280, True, True))
+        presenter.feed_video.assert_called_once()
+        presenter.feed_audio.assert_called_once_with(bytes(3840))
+        self.assertIsNone(self.host.phone_owner)
+
+    async def test_phone_source_rejects_oversized_surface(self):
+        await self.pair(); self.host.phone_presenter = Mock()
+        await self.send('source.start', width=1920, height=1920, codec='h264')
+        self.assertEqual((await self.receive())['type'], 'error')

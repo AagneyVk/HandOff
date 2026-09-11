@@ -23,6 +23,8 @@ class Host:
         self.audio_factory = AudioCapture
         self.approved = None
         self.owner = None
+        self.phone_owner = None
+        self.phone_presenter = None
         self.connections = 0
         self.status = 'Choose an app or display to share'
 
@@ -76,6 +78,9 @@ class Connection:
         self.input_count = 0
         self.input_since = time.monotonic()
         self.profile = 'balanced'
+        self.source_session = None
+        self.source_sequence = 0
+        self.source_controls = False
 
     async def send(self, type_, **kwargs):
         async with self.lock:
@@ -209,6 +214,45 @@ class Connection:
             if name not in ('backspace', 'tab', 'enter', 'escape', 'left', 'up', 'right', 'down', 'delete'):
                 raise ValueError('Unsupported key.')
             self.host.key(self.selection[0], name, self.source_size)
+        elif type_ == 'source.start':
+            if self.session or self.source_session: raise ValueError('Another HandOff session is already active.')
+            if self.host.phone_owner is not None: raise ValueError('Another phone screen is already shared.')
+            width, height = msg.get('width'), msg.get('height')
+            if (type(width) is not int or type(height) is not int or not (2 <= width <= 1920 and 2 <= height <= 1920)
+                    or width * height > 1920 * 1080):
+                raise ValueError('Unsupported phone video dimensions.')
+            if msg.get('codec') != 'h264': raise ValueError('Phone sharing requires H.264.')
+            self.source_session, self.source_sequence = secrets.token_hex(16), 0
+            self.source_controls = msg.get('controls') is True
+            self.host.phone_owner = self
+            try:
+                if self.host.phone_presenter is None: raise ValueError('Phone presentation is unavailable.')
+                self.host.phone_presenter.start(self, width, height, msg.get('audio') is True, self.source_controls)
+                self.host.status = 'Phone is live on this computer · Close its viewer to return'
+                await self.send('source.ready', session=self.source_session)
+            except BaseException:
+                self.stop_source(); raise
+        elif type_ == 'source.frame':
+            self.validate_source(msg)
+            sequence = msg.get('sequence')
+            if type(sequence) is not int or sequence != self.source_sequence + 1:
+                raise ValueError('Out-of-order phone frame.')
+            data = await wire.read_binary(self.reader, wire.H264, 5)
+            if not self.host.phone_presenter.feed_video(data):
+                raise ValueError('Phone video did not decode.')
+            self.source_sequence = sequence
+            await self.send('source.ack', session=self.source_session, sequence=sequence)
+        elif type_ == 'source.audio':
+            self.validate_source(msg)
+            if msg.get('rate') != 48000 or msg.get('channels') != 2 or msg.get('format') != 's16le':
+                raise ValueError('Unsupported phone audio format.')
+            data = await wire.read_binary(self.reader, wire.PCM, 2)
+            if len(data) != CHUNK_BYTES: raise ValueError('Invalid phone audio packet.')
+            self.host.phone_presenter.feed_audio(data)
+        elif type_ == 'source.stop':
+            self.validate_source(msg)
+            self.stop_source()
+            await self.send('source.stopped', message='Phone returned')
         else:
             raise ValueError('Unsupported request')
 
@@ -233,6 +277,19 @@ class Connection:
         if now - self.input_since > 1: self.input_since, self.input_count = now, 0
         self.input_count += 1
         if self.input_count > 60: raise ValueError('Too many input events.')
+
+    def validate_source(self, msg):
+        if (not self.source_session or self.host.phone_owner is not self
+                or msg.get('session') != self.source_session or not self.host.trust.trusted(self.device)):
+            raise ValueError('Phone sharing session ended.')
+
+    def stop_source(self):
+        if self.host.phone_presenter: self.host.phone_presenter.stop(self)
+        self.source_session = None
+        self.source_controls = False
+        if self.host.phone_owner is self:
+            self.host.phone_owner = None
+            self.host.status = 'Ready for your paired phone' if self.host.approved else 'Choose an app or display to share'
 
     async def frames(self, frame):
         try:
@@ -295,6 +352,7 @@ class Connection:
             self.host.status = 'Ready for your paired phone' if self.host.approved else 'Sharing stopped'
 
     async def stop(self):
+        self.stop_source()
         if self.audio_task:
             self.audio_task.cancel()
             with contextlib.suppress(asyncio.CancelledError): await self.audio_task
