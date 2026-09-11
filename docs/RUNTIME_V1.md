@@ -1,5 +1,13 @@
 # Implemented V1 runtime
 
+## RC2 media extensions
+
+The JPEG base protocol below remains compatible. RC2 adds `codecs: ["h264", "jpeg"]` and optional `audio: true` to `start`. H.264 uses packet kind **3** (Annex B access unit); PCM audio uses kind **4** (48 kHz stereo signed 16-bit little endian, 960 samples/channel). `frame` includes `codec`; `started` includes `codec`, `encoder`, `width` and `height`. Hardware negotiation fails back to JPEG before the first frame. Each `audio` metadata packet (`session`, `rate`, `channels`, `format: "s16le"`) immediately precedes its PCM packet. `audio.stopped` closes playback independently of video. Both desktop and Android must opt in to all-computer output audio.
+
+H.264 acknowledgements follow MediaCodec output submission to its Surface; JPEG acknowledgements follow UI display scheduling. Neither is an optical end-to-end latency measurement. See [RC2 media and release details](RELEASE.md) for buffering, hardware validation and signing requirements.
+
+## Base protocol and trust model
+
 The desktop owner explicitly selects a window. Only that window is listed to authenticated clients, and one phone owns the live session at a time. Stopping sharing invalidates the selection immediately, blocks subsequent input and tears down streaming through a 200 ms authorization monitor. A packet already on the network cannot be recalled.
 
 ## Pairing and identity
