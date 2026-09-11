@@ -8,6 +8,7 @@ import time
 
 from . import wire
 from .media import Capture
+from .audio import AudioCapture, CHUNK_BYTES
 
 LOG = logging.getLogger('handoff')
 
@@ -16,6 +17,8 @@ class Host:
     def __init__(self, trust, catalog, identity, pointer, scroll, capture=Capture):
         self.trust, self.catalog, self.identity = trust, catalog, identity
         self.pointer, self.scroll, self.capture_factory = pointer, scroll, capture
+        self.audio_enabled = False
+        self.audio_factory = AudioCapture
         self.approved = None
         self.owner = None
         self.connections = 0
@@ -60,6 +63,8 @@ class Connection:
         self.selection = None
         self.capture = None
         self.stream = None
+        self.audio = None
+        self.audio_task = None
         self.lock = asyncio.Lock()
         self.ack = asyncio.Event()
         self.sequence = 0
@@ -130,12 +135,16 @@ class Connection:
             self.session = secrets.token_hex(16)
             self.sequence = self.shown_sequence = 0
             try:
-                self.capture = self.host.capture_factory(*selection)
+                self.capture = self.host.capture_factory(*selection, 'h264' in msg.get('codecs', []) if isinstance(msg.get('codecs', []), list) else False)
                 first_frame = await self.capture.frame()
                 self.validate_session()
-                await self.send('started', session=self.session, codec='jpeg', audio=False)
+                codec = first_frame[5] if len(first_frame) > 5 else 'jpeg'
+                await self.send('started', session=self.session, codec=codec, audio=False,
+                    width=first_frame[1], height=first_frame[2], encoder=first_frame[6] if len(first_frame) > 6 else 'jpeg')
                 self.host.status = 'Sharing with paired phone · Stop sharing to end'
                 self.stream = asyncio.create_task(self.frames(first_frame))
+                if msg.get('audio') is True and self.host.audio_enabled:
+                    self.audio_task = asyncio.create_task(self.audio_frames())
             except BaseException:
                 await self.stop()
                 raise
@@ -187,18 +196,19 @@ class Connection:
             while True:
                 started = time.monotonic()
                 self.validate_session()
-                data, width, height, sw, sh = frame
+                data, width, height, sw, sh, *codec_info = frame
+                codec = codec_info[0] if codec_info else 'jpeg'
                 self.source_size = (sw, sh)
                 self.sequence += 1
                 self.ack.clear()
                 async with self.lock:
                     self.writer.write(wire.encode(wire.JSON, wire.message('frame', session=self.session,
-                        sequence=self.sequence, width=width, height=height)))
-                    self.writer.write(wire.encode(wire.JPEG, data))
+                        sequence=self.sequence, width=width, height=height, codec=codec)))
+                    self.writer.write(wire.encode(wire.H264 if codec == 'h264' else wire.JPEG, data))
                     await asyncio.wait_for(self.writer.drain(), 5)
                 # No second frame may accumulate while Android is decoding/displaying this one.
                 await asyncio.wait_for(self.ack.wait(), 10)
-                await asyncio.sleep(max(0, 1 / 12 - (time.monotonic() - started)))
+                await asyncio.sleep(max(0, 1 / (30 if codec == 'h264' else 12) - (time.monotonic() - started)))
                 frame = await self.capture.frame()
         except asyncio.CancelledError:
             raise
@@ -208,16 +218,41 @@ class Connection:
         finally:
             self.release()
 
+    async def audio_frames(self):
+        try:
+            self.audio = self.host.audio_factory()
+            while self.session and self.host.audio_enabled:
+                chunk = await self.audio.chunk()
+                self.validate_session()
+                if not self.host.audio_enabled: break
+                if len(chunk) != CHUNK_BYTES: raise ValueError('Invalid PCM chunk')
+                async with self.lock:
+                    self.writer.write(wire.encode(wire.JSON, wire.message('audio', session=self.session,
+                        rate=48000, channels=2, format='s16le')))
+                    self.writer.write(wire.encode(wire.PCM, chunk))
+                    await asyncio.wait_for(self.writer.drain(), 1)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            with contextlib.suppress(Exception): await self.send('audio.stopped', message=str(exc))
+        finally:
+            if self.audio: self.audio.close(); self.audio = None
+
     def release(self):
         if self.capture:
             self.capture.close()
             self.capture = None
         self.session = None
+        if self.audio_task: self.audio_task.cancel()
         if self.host.owner is self:
             self.host.owner = None
             self.host.status = 'Ready for your paired phone' if self.host.approved else 'Sharing stopped'
 
     async def stop(self):
+        if self.audio_task:
+            self.audio_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError): await self.audio_task
+            self.audio_task = None
         if self.stream:
             self.stream.cancel()
             with contextlib.suppress(asyncio.CancelledError):

@@ -74,7 +74,7 @@ class Desktop:
         body = ttk.Frame(main); body.pack(fill='both', expand=True, pady=22)
         left = ttk.Frame(body); left.pack(side='left', fill='both', expand=True, padx=(0, 24))
         ttk.Label(left, text='1   Choose your app', font=('Segoe UI', 13, 'bold')).pack(anchor='w', pady=(0, 12))
-        self.table = ttk.Treeview(left, columns=('app',), show='tree headings', selectmode='browse', height=4)
+        self.table = ttk.Treeview(left, columns=('app',), show='tree headings', selectmode='browse', height=3)
         self.table.heading('#0', text='Window'); self.table.heading('app', text='App')
         self.table.column('#0', width=290); self.table.column('app', width=110)
         self.table.pack(fill='both', expand=True)
@@ -93,6 +93,9 @@ class Desktop:
         ttk.Button(right, text='Copy pairing link', command=self.copy).pack(fill='x')
         self.pair_status = tk.StringVar(value='Codes expire after 5 minutes and work once.')
         ttk.Label(right, textvariable=self.pair_status, wraplength=270).pack(pady=8)
+        self.audio_choice = tk.BooleanVar(value=False)
+        ttk.Checkbutton(main, text='Share computer audio (all apps, never microphone)', variable=self.audio_choice,
+                        command=lambda: setattr(self.host, 'audio_enabled', self.audio_choice.get())).pack(anchor='w')
         self.status = tk.StringVar(value='Starting encrypted local host…')
         ttk.Label(main, textvariable=self.status, wraplength=850).pack(anchor='w', pady=6)
         ttk.Button(main, text='Remove all paired phones', command=self.revoke).pack(anchor='w')

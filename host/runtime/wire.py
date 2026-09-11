@@ -10,6 +10,8 @@ MAX_CONTROL = 16384
 MAX_PACKET = 2 * 1024 * 1024
 JSON = 1
 JPEG = 2
+H264 = 3
+PCM = 4
 
 
 def encode(kind, payload):
@@ -17,7 +19,7 @@ def encode(kind, payload):
         payload = json.dumps(payload, allow_nan=False, separators=(',', ':')).encode()
         if len(payload) > MAX_CONTROL:
             raise ValueError('Control message too large')
-    if kind not in (JSON, JPEG) or not 0 < len(payload) < MAX_PACKET:
+    if kind not in (JSON, JPEG, H264, PCM) or not 0 < len(payload) < MAX_PACKET:
         raise ValueError('Invalid packet')
     return struct.pack('!IB', len(payload) + 1, kind) + payload
 

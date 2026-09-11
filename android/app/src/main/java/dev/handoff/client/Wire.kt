@@ -15,7 +15,7 @@ object Wire {
         val length = input.readInt()
         require(length in 2..MAX_PACKET) { "Invalid packet size" }
         val kind = input.readUnsignedByte()
-        require(kind == 1 || kind == 2) { "Unsupported packet" }
+        require(kind in 1..4) { "Unsupported packet" }
         require(kind != 1 || length <= 16385) { "Control packet too large" }
         return kind to ByteArray(length - 1).also { input.readFully(it) }
     }

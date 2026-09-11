@@ -23,6 +23,10 @@ class LiveConnectionTest {
         store.clear()
         val paired = CountDownLatch(1)
         val frames = CountDownLatch(2)
+        val audio = CountDownLatch(2)
+        val h264Frames = AtomicInteger()
+        val texture = android.graphics.SurfaceTexture(false)
+        val surface = android.view.Surface(texture)
         val returned = CountDownLatch(1)
         val reconnected = CountDownLatch(1)
         val count = AtomicInteger()
@@ -36,24 +40,30 @@ class LiveConnectionTest {
             }, onMessage = { msg ->
                 if (msg.getString("type") == "stopped") returned.countDown()
                 if (msg.getString("type") == "error") failure.set(msg.optString("message"))
-            }, onFrame = { bitmap, _ ->
+            }, onVideoFrame = { width, height, _ ->
+                if (width != 64 || height != 48) failure.set("Unexpected H.264 dimensions")
+                h264Frames.incrementAndGet(); frames.countDown()
+            }, onAudio = { audio.countDown() }, onFrame = { bitmap, _ ->
                 if (bitmap.width != 64 || bitmap.height != 48 || Color.green(bitmap.getPixel(20, 20)) < 170)
                     failure.set("Decoded frame does not match the host fixture")
                 frames.countDown()
             })
+            client.setSurface(surface)
             client.pair(Pairing.parse(raw))
         }
         try {
             assertTrue("Pair timed out: ${failure.get()}", paired.await(15, TimeUnit.SECONDS))
             assertNotNull("Credentials not saved through Android Keystore", store.load())
-            client.start("win32:7")
+            client.start("win32:7", audio = true)
             assertTrue("Video/ack timed out: ${failure.get()}", frames.await(15, TimeUnit.SECONDS))
+            assertTrue("PCM audio did not arrive", audio.await(10, TimeUnit.SECONDS))
+            assertTrue("H.264 was not decoded", h264Frames.get() >= 2)
             client.stop()
             assertTrue("Return timed out: ${failure.get()}", returned.await(10, TimeUnit.SECONDS))
             client.close()
             client.reconnect(store.load()!!)
             assertTrue("Reconnect timed out: ${failure.get()}", reconnected.await(15, TimeUnit.SECONDS))
             assertNull(failure.get())
-        } finally { client.dispose(); store.clear() }
+        } finally { client.dispose(); store.clear(); surface.release(); texture.release() }
     }
 }

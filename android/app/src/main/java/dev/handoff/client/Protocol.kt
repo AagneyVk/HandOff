@@ -5,6 +5,8 @@ import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.view.Choreographer
+import android.view.Surface
+import android.os.SystemClock
 import org.json.JSONObject
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -25,6 +27,8 @@ class ProtocolClient(
     private val onMessage: (JSONObject) -> Unit,
     private val onState: (String) -> Unit,
     private val onFrame: (Bitmap, Int) -> Unit,
+    private val onVideoFrame: (Int, Int, Int) -> Unit = { _, _, _ -> },
+    private val onAudio: () -> Unit = {},
 ) {
     private val main = Handler(Looper.getMainLooper())
     private val generation = AtomicLong()
@@ -34,6 +38,10 @@ class ProtocolClient(
     @Volatile private var writer: DataOutputStream? = null
     @Volatile private var session: String? = null
     @Volatile private var disposed = false
+    @Volatile private var surface: Surface? = null
+    @Volatile private var audioAllowed = false
+    @Volatile private var activeAudio: AudioPlayer? = null
+    fun setSurface(value: Surface?) { surface = value }
 
     init { heartbeat.scheduleAtFixedRate({ if (writer != null) send("ping") }, 8, 8, TimeUnit.SECONDS) }
     private fun state(epoch: Long, value: String) { main.post { if (generation.get() == epoch && !disposed) onState(value) } }
@@ -51,6 +59,9 @@ class ProtocolClient(
         socket = raw
         state(epoch, "Connecting securely…")
         thread(name = "handoff-reader", isDaemon = true) {
+            var decoder: VideoDecoder? = null
+            var player: AudioPlayer? = null
+            var decoderSize: Pair<Int, Int>? = null
             try {
                 raw.connect(InetSocketAddress(host, port), 5000)
                 raw.tcpNoDelay = true
@@ -81,12 +92,45 @@ class ProtocolClient(
                     val msg = readJson(input)
                     when (msg.getString("type")) {
                         "started" -> session = msg.getString("session")
-                        "stopped" -> session = null
+                        "stopped" -> { session = null; decoder?.close(); decoder = null; decoderSize = null; player?.close(); player = null }
+                        "audio.stopped" -> { player?.close(); player = null }
+                        "audio" -> {
+                            require(msg.getString("session") == session && audioAllowed) { "Unexpected audio session" }
+                            require(msg.getInt("rate") == 48000 && msg.getInt("channels") == 2 && msg.getString("format") == "s16le") { "Unsupported audio format" }
+                            val (kind, bytes) = Wire.read(input)
+                            require(kind == 4 && bytes.size == 3840) { "Invalid audio packet" }
+                            if (player == null) {
+                                synchronized(this) {
+                                    require(generation.get() == epoch) { "Session closed" }
+                                    player = AudioPlayer()
+                                    activeAudio = player
+                                }
+                            }
+                            player?.offer(bytes)
+                            main.post { if (generation.get() == epoch && !disposed) onAudio() }
+                            continue
+                        }
                         "revoked" -> { store.clear(); error(msg.getString("message")) }
                         "frame" -> {
                             require(msg.getString("session") == session) { "Stale video session" }
                             val sequence = msg.getInt("sequence")
                             val (kind, bytes) = Wire.read(input)
+                            if (kind == 3) {
+                                val width = msg.getInt("width"); val height = msg.getInt("height")
+                                require(width in 2..1600 && height in 2..1000 && msg.getString("codec") == "h264") { "Invalid H.264 format" }
+                                if (decoder == null || decoderSize != (width to height)) {
+                                    decoder?.close(); decoder = null
+                                    val deadline = SystemClock.elapsedRealtime() + 3000
+                                    while ((surface == null || surface?.isValid != true) && generation.get() == epoch && SystemClock.elapsedRealtime() < deadline) Thread.sleep(10)
+                                    require(generation.get() == epoch) { "Session closed" }
+                                    decoder = VideoDecoder(surface ?: error("Video surface unavailable"), width, height)
+                                    decoderSize = width to height
+                                }
+                                decoder.render(bytes, sequence)
+                                main.post { if (generation.get() == epoch && !disposed) onVideoFrame(width, height, sequence) }
+                                send("ack", JSONObject().put("sequence", sequence), true)
+                                continue
+                            }
                             require(kind == 2) { "Missing video frame" }
                             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
@@ -111,6 +155,8 @@ class ProtocolClient(
             } catch (e: Exception) {
                 state(epoch, e.message ?: "Connection lost. Reconnect to continue.")
             } finally {
+                try { decoder?.close() } catch (_: Exception) {}
+                try { player?.close() } catch (_: Exception) {}
                 try { raw.close() } catch (_: Exception) { }
                 synchronized(this) {
                     if (generation.get() == epoch) { writer = null; socket = null; session = null }
@@ -148,7 +194,10 @@ class ProtocolClient(
             state(generation.get(), "Connection is busy. Reconnect to continue.")
         }
     }
-    fun start(window: String) = send("start", JSONObject().put("window", window))
+    fun start(window: String, compatibility: Boolean = false, audio: Boolean = false) {
+        audioAllowed = audio
+        send("start", JSONObject().put("window", window).put("codecs", org.json.JSONArray(if (compatibility) listOf("jpeg") else listOf("h264", "jpeg"))).put("audio", audio))
+    }
     fun stop() = send("stop", includeSession = true)
     fun tap(x: Float, y: Float, sequence: Int) = send("tap", JSONObject().put("x", x).put("y", y).put("sequence", sequence), true)
     fun scroll(x: Float, y: Float, dy: Float, sequence: Int) = send("scroll", JSONObject().put("x", x).put("y", y).put("dy", dy).put("sequence", sequence), true)
@@ -156,6 +205,7 @@ class ProtocolClient(
         generation.incrementAndGet()
         try { socket?.close() } catch (_: Exception) { }
         socket = null; writer = null; session = null
+        activeAudio?.close(); activeAudio = null
         output.queue.clear()
     }
     fun dispose() { disposed = true; close(); output.shutdownNow(); heartbeat.shutdownNow() }

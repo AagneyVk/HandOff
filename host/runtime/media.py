@@ -5,7 +5,7 @@ import multiprocessing
 import sys
 
 
-def _worker(pipe, window, pid):
+def _worker(pipe, window, pid, prefer_h264):
     try:
         if sys.platform == 'win32':
             import ctypes
@@ -14,17 +14,16 @@ def _worker(pipe, window, pid):
             from host.windows.capture import grab
         else:
             from host.linux.capture import grab
+        from .encoder import VideoEncoder
+        encoder = VideoEncoder(prefer_h264)
         while pipe.recv() == 'frame':
             try:
                 image = grab(window, pid)
                 source = image.size
-                image.thumbnail((1600, 1000))
-                buffer = io.BytesIO()
-                image.convert('RGB').save(buffer, format='JPEG', quality=72)
-                data = buffer.getvalue()
+                data, width, height, codec, backend = encoder.encode(image)
                 if len(data) >= 2 * 1024 * 1024:
                     raise ValueError('Frame is too large to send.')
-                pipe.send((True, data, image.width, image.height, *source))
+                pipe.send((True, data, width, height, *source, codec, backend))
             except Exception as exc:
                 pipe.send((False, str(exc)))
                 break
@@ -35,10 +34,10 @@ def _worker(pipe, window, pid):
 
 
 class Capture:
-    def __init__(self, window, pid):
+    def __init__(self, window, pid, prefer_h264=False):
         context = multiprocessing.get_context('spawn')
         self.pipe, child = context.Pipe()
-        self.process = context.Process(target=_worker, args=(child, window, pid), daemon=True)
+        self.process = context.Process(target=_worker, args=(child, window, pid, prefer_h264), daemon=True)
         self.process.start()
         child.close()
 
