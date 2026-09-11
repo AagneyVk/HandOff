@@ -24,7 +24,7 @@ class Host:
         self.approved = None
         self.owner = None
         self.connections = 0
-        self.status = 'Choose an app to share'
+        self.status = 'Choose an app or display to share'
 
     def approve(self, window):
         self.approved = (window, self.identity(window))
