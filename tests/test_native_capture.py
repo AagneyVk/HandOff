@@ -20,7 +20,16 @@ class WindowsCaptureTests(unittest.TestCase):
             root.update()
             selected = next(w for w in list_windows() if w.title == root.title())
             pid = identity(selected.id)
-            image = grab(selected.id, pid)
+            # Mapping the Tk window does not guarantee the compositor has painted it.
+            # Wait for observable fixture pixels, with a hard bound, before testing input.
+            import time
+            paint_deadline = time.monotonic() + 2
+            while True:
+                root.update()
+                image = grab(selected.id, pid)
+                if image.getpixel((160, 120))[1] > 150 or time.monotonic() >= paint_deadline:
+                    break
+                time.sleep(.02)
             self.assertEqual(image.size, (320, 240))
             red, green, blue = image.getpixel((160, 120))
             self.assertLess(red, 40); self.assertGreater(green, 150); self.assertLess(blue, 110)
