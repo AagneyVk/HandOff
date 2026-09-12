@@ -330,6 +330,7 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                             }
                         }
                     }
+                    item { UpdateCard(activity) }
                     item {
                         TextButton(onClick = { export.launch("handoff-session.json") }, enabled = client.report().optInt("decoded_frames") > 0) { Text("Export session report") }
                         Text("Private by design", style = MaterialTheme.typography.titleMedium)

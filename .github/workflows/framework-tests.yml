@@ -60,6 +60,19 @@ jobs:
       - run: python -m PyInstaller --noconfirm --clean --onedir --windowed --name HandOff --paths . --collect-all av --collect-all soundcard host/launcher.py
       - name: Launch and close packaged executable
         run: python tools/smoke_windows.py dist/HandOff/HandOff.exe
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $version = python -c "from host.version import VERSION; print(VERSION)"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging/windows.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
+      - name: Test install, upgrade, launch and uninstall
+        run: ./tools/test_windows_installer.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HandOff-Installer
+          path: dist/installer/HandOff-Setup.exe
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: Windows-desktop-preview
@@ -136,3 +149,91 @@ jobs:
         with:
           name: android-device-test-results
           path: android/app/build/reports/androidTests/
+
+  android-release:
+    name: Android update signing
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [windows-host, linux-host, windows-package, android-client]
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.identity.outputs.ready }}
+    env:
+      HANDOFF_SOURCE_REVISION: ${{ github.sha }}
+      ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      ANDROID_SIGNING_SHA256: ${{ secrets.ANDROID_SIGNING_SHA256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check permanent signing identity
+        id: identity
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_B64" ]; then
+            python tools/prepare_signing.py android
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'Android release requires one-time signing setup: run python tools/setup_android_signing.py locally. Debug APKs are not published as updates.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/setup-java@v5
+        if: steps.identity.outputs.ready == 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        if: steps.identity.outputs.ready == 'true'
+      - if: steps.identity.outputs.ready == 'true'
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.identity.outputs.ready == 'true'
+        with:
+          gradle-version: '8.10.2'
+      - if: steps.identity.outputs.ready == 'true'
+        run: gradle -p android :app:testReleaseUnitTest :app:lintRelease :app:assembleRelease
+      - if: steps.identity.outputs.ready == 'true'
+        run: python tools/verify_android_signature.py
+      - uses: actions/upload-artifact@v4
+        if: steps.identity.outputs.ready == 'true'
+        with:
+          name: HandOff-Android-release
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/handoff-release.jks"
+
+  publish-update:
+    name: Publish tested update
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [windows-host, linux-host, windows-package, android-client, android-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: handoff-release-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: HandOff-Installer
+          path: release-files
+      - uses: actions/download-artifact@v4
+        if: needs.android-release.outputs.ready == 'true'
+        with:
+          name: HandOff-Android-release
+          path: signed-apk
+      - if: needs.android-release.outputs.ready == 'true'
+        run: cp signed-apk/app-release.apk release-files/HandOff.apk
+      - name: Publish versioned release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(python -c 'from host.version import VERSION; print(VERSION)')
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo 'Version already published. Bump both app versions for a new update.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          printf '%s\n' 'Tested release candidate. Windows installer is unsigned; Android APK is included only when permanent signing is configured. Pairing and settings are kept on compatible updates. See docs/UPDATES.md for the one-time debug APK migration.' > release-notes.txt
+          gh release create "$TAG" release-files/* --target "$GITHUB_SHA" --title "HandOff $VERSION" --prerelease --notes-file release-notes.txt

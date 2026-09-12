@@ -4,6 +4,7 @@ import contextlib
 import logging
 import multiprocessing
 import os
+import queue
 from pathlib import Path
 import socket
 import sys
@@ -47,6 +48,11 @@ def local_addresses():
 class Desktop:
     def __init__(self, root):
         self.root = root
+        self.update_queue = queue.Queue()
+        self.update_release = None
+        self.update_installer = None
+        self.update_busy = False
+        self.update_directory = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "HandOff" / "updates"
         directory = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.local' / 'share')) / 'HandOff'
         self.identity = Identity(directory)
         self.trust = TrustStore(directory)
@@ -104,10 +110,37 @@ class Desktop:
         self.status = tk.StringVar(value='Starting encrypted local host…')
         ttk.Label(main, textvariable=self.status, wraplength=850).pack(anchor='w', pady=6)
         ttk.Button(main, text='Remove all paired phones', command=self.revoke).pack(anchor='w')
+        from .version import VERSION
+        updates = ttk.Frame(main); updates.pack(fill='x', pady=6)
+        self.update_status = tk.StringVar(value=f'HandOff {VERSION}')
+        ttk.Label(updates, textvariable=self.update_status).pack(side='left')
+        self.update_button = ttk.Button(updates, text='Check for updates', command=self.update)
+        self.update_button.pack(side='right')
         root.protocol('WM_DELETE_WINDOW', self.close)
         self.thread = threading.Thread(target=self.network, daemon=True); self.thread.start()
         self.refresh()
         self.poll()
+
+    def update(self):
+        from .runtime import updates
+        if self.update_busy: return
+        if self.update_installer:
+            if not messagebox.askyesno('Install update', 'HandOff will close. Complete the installer, then select Open HandOff. Your pairing and settings will be kept.'): return
+            try: updates.install(self.update_installer)
+            except Exception as exc: return messagebox.showerror('Update', str(exc))
+            self.close(); return
+        if sys.platform != 'win32' or not getattr(sys, 'frozen', False):
+            return messagebox.showinfo('Source installation', 'Update this source checkout with git pull. The Windows installer includes app updates.')
+        self.update_busy = True
+        self.update_button.configure(state='disabled')
+        self.update_status.set('Downloading and verifying…' if self.update_release else 'Checking GitHub Releases…')
+        release = self.update_release
+        def work():
+            try:
+                result = updates.download(release, self.update_directory) if release else updates.check()
+                self.update_queue.put(('download' if release else 'check', result))
+            except Exception as exc: self.update_queue.put(('error', str(exc)))
+        threading.Thread(target=work, daemon=True).start()
 
     def network(self):
         async def run():
@@ -173,6 +206,19 @@ class Desktop:
 
     def poll(self):
         if self.shutting_down: return
+        try:
+            kind, value = self.update_queue.get_nowait()
+            self.update_busy = False; self.update_button.configure(state='normal')
+            if kind == 'download':
+                self.update_installer = value
+                self.update_status.set('Update verified and ready')
+                self.update_button.configure(text='Install update')
+            elif kind == 'check':
+                self.update_release = value
+                self.update_status.set(f"Update available: {value['tag']}" if value else 'No newer installer is published')
+                self.update_button.configure(text='Download update' if value else 'Check for updates')
+            else: self.update_status.set('Update failed: ' + value)
+        except queue.Empty: pass
         if self.failure:
             self.status.set('Host could not start: ' + self.failure)
         elif self.ready:

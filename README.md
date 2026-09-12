@@ -74,3 +74,7 @@ python -m unittest discover -s tests -v
 CI runs encrypted socket integration tests, Windows native pixel capture, Linux XComposite pixel capture under Xvfb, Android JVM tests/build/lint, an Android H.264/audio emulator exchange and Windows packaging/launch checks. Test fixtures for transport use generated images; separate native tests exercise real window APIs.
 
 See [runtime protocol](docs/RUNTIME_V1.md) and [acceptance checklist](docs/ACCEPTANCE.md). Older architecture documents describe the vision; the implemented runtime is `host/runtime` and the Android V1 framed-TLS client. The old newline-delimited V0 harness is for development only and is incompatible with the new Android client.
+
+## Installing and updating
+
+Use the [GitHub Releases](https://github.com/AagneyVk/HandOff/releases) Windows installer, then Check for updates inside HandOff. Android signed updates require one-time signing setup. See [update setup and migration](docs/UPDATES.md).
