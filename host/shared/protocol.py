@@ -72,6 +72,10 @@ class Message:
         missing = required - data.keys()
         if missing:
             raise ProtocolError(f"missing fields: {sorted(missing)}")
+        if not isinstance(data["id"], str) or not data["id"]:
+            raise ProtocolError("id must be a non-empty string")
+        if type(data["timestamp_us"]) is not int or data["timestamp_us"] < 0:
+            raise ProtocolError("timestamp_us must be a non-negative integer")
         return cls(
             version=data["version"], id=data["id"], type=data["type"],
             session_id=data.get("session_id"), timestamp_us=data["timestamp_us"],
@@ -80,14 +84,16 @@ class Message:
 
 
 def validate(message: Message) -> None:
-    if message.version != PROTOCOL_VERSION:
+    if type(message.version) is not int or message.version != PROTOCOL_VERSION:
         raise ProtocolError(f"unsupported protocol version {message.version}")
-    if message.type not in ALLOWED_TYPES:
+    if not isinstance(message.type, str) or message.type not in ALLOWED_TYPES:
         raise ProtocolError(f"unknown message type {message.type!r}")
     if not isinstance(message.id, str) or not message.id:
         raise ProtocolError("id must be a non-empty string")
-    if not isinstance(message.timestamp_us, int) or message.timestamp_us < 0:
+    if type(message.timestamp_us) is not int or message.timestamp_us < 0:
         raise ProtocolError("timestamp_us must be a non-negative integer")
+    if message.session_id is not None and (not isinstance(message.session_id, str) or not message.session_id):
+        raise ProtocolError("session_id must be a non-empty string")
     if not isinstance(message.payload, Mapping):
         raise ProtocolError("payload must be an object")
 
@@ -99,3 +105,4 @@ def normalized(value: Any, name: str) -> float:
     if not 0.0 <= result <= 1.0:
         raise ProtocolError(f"{name} must be in range 0..1")
     return result
+

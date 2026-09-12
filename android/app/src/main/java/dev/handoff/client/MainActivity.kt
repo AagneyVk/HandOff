@@ -1,107 +1,401 @@
 package dev.handoff.client
 
+import android.graphics.Bitmap
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.provider.Settings
+import android.view.WindowManager
+import android.view.SurfaceView
+import android.view.SurfaceHolder
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import org.json.JSONObject
-import kotlin.math.abs
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 class MainActivity : ComponentActivity() {
+    private var background: (() -> Unit)? = null
+    private var projectionFlow = false
+    private var settingsFlow = false
+    fun keepSettingsConnection() { settingsFlow = true }
+    override fun onResume() { super.onResume(); settingsFlow = false }
+    fun keepProjectionConnection(value: Boolean) { projectionFlow = value }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { HandOffHarness() }
+        setContent { HandOffApp(this) { background = it } }
     }
+    override fun onStop() { if (!projectionFlow && !settingsFlow) background?.invoke(); super.onStop() }
 }
+private data class AppWindow(val id: String, val title: String, val app: String, val kind: String)
 
 @Composable
-private fun HandOffHarness() {
-    var host by remember { mutableStateOf("192.168.1.2") }
-    var state by remember { mutableStateOf("Not connected") }
-    var lastEvent by remember { mutableStateOf("—") }
-    var running by remember { mutableStateOf(false) }
+private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -> Unit) {
+    val context = LocalContext.current
+    val store = remember { CredentialStore(context) }
+    var paired by remember { mutableStateOf(store.load()) }
+    var status by remember { mutableStateOf("Ready when you are") }
+    var connected by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var live by remember { mutableStateOf(false) }
+    var pairingText by remember { mutableStateOf("") }
+    var showManual by remember { mutableStateOf(false) }
+    var windows by remember { mutableStateOf(emptyList<AppWindow>()) }
+    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var sequence by remember { mutableIntStateOf(0) }
+    var compatibility by remember { mutableStateOf(false) }
+    var audioChoice by remember { mutableStateOf(false) }
+    var videoCodec by remember { mutableStateOf("jpeg") }
+    var videoSize by remember { mutableStateOf(640 to 480) }
+    var title by remember { mutableStateOf("Your app") }
+    var dragMode by remember { mutableStateOf(false) }
+    var keyboardSupported by remember { mutableStateOf(false) }
+    var textEntry by remember { mutableStateOf("") }
+    var profile by remember { mutableStateOf("balanced") }
+    var phoneSharing by remember { mutableStateOf(false) }
+    var phoneAudio by remember { mutableStateOf(false) }
+    var projectionPending by remember { mutableStateOf(false) }
+    var controlEnabled by remember { mutableStateOf(RemoteControlService.enabled()) }
+    var showControlHelp by remember { mutableStateOf(false) }
     val client = remember {
-        ProtocolClient(
-            onMessage = { msg ->
-                val type = msg.optString("type")
-                lastEvent = type
-                if (type == "session.started") running = true
-            },
-            onState = { state = it },
-        )
-    }
-    DisposableEffect(Unit) { onDispose { client.close() } }
-
-    MaterialTheme {
-        Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("HandOff V0", style = MaterialTheme.typography.headlineMedium)
-            Text("$state · last: $lastEvent", style = MaterialTheme.typography.bodySmall)
-            OutlinedTextField(
-                value = host,
-                onValueChange = { host = it },
-                label = { Text("Host LAN IP") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { client.connect(host.trim()) }) { Text("Connect") }
-                Button(onClick = { client.startFakeSession() }) { Text("Start test") }
-            }
-
-            Text(if (running) "Synthetic interaction surface" else "Start the test session to enable input")
-            MotionSurface(enabled = running, client = client)
-            Text("Tap sends normalized pointer input. Drag vertically sends scroll. The moving grid is intentionally rendered locally in V0; real encoded frames replace it next.")
-        }
-    }
-}
-
-@Composable
-private fun MotionSurface(enabled: Boolean, client: ProtocolClient) {
-    var phase by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(enabled) {
-        while (enabled) {
-            withFrameNanos { phase = ((it / 1_000_000L) % 4000L) / 4000f }
-        }
-    }
-    Canvas(
-        Modifier
-            .fillMaxWidth()
-            .aspectRatio(16f / 9f)
-            .background(Color(0xFF111318))
-            .pointerInput(enabled) {
-                if (enabled) detectTapGestures { p ->
-                    client.pointer(p.x / size.width, p.y / size.height, "tap")
+        ProtocolClient(store, onState = { value ->
+            status = value
+            busy = value == "Connecting securely…"
+            connected = value == "Connected"
+            if (!connected) { live = false; bitmap = null; windows = emptyList() }
+            paired = store.load()
+        }, onFrame = { frame, seq -> bitmap = frame; sequence = seq },
+        onVideoFrame = { width, height, seq -> videoSize = width to height; sequence = seq },
+        onAudio = { status = "Computer audio · All apps" }, onMessage = { msg ->
+            when (msg.getString("type")) {
+                "windows" -> {
+                    val array = msg.getJSONArray("windows")
+                    windows = (0 until array.length()).map { array.getJSONObject(it).let { w -> AppWindow(w.getString("id"), w.getString("title"), w.optString("app"), w.optString("kind", "window")) } }
+                }
+                "started" -> {
+                    videoCodec = msg.optString("codec", "jpeg")
+                    videoSize = msg.optInt("width", 640) to msg.optInt("height", 480)
+                    val controls = msg.optJSONArray("controls")
+                    keyboardSupported = controls != null && (0 until controls.length()).any { controls.optString(it) == "text" }
+                    live = true; busy = false
+                    status = if (videoCodec == "h264") "H.264 · ${msg.optString("encoder")}" else "Compatibility video · JPEG"
+                }
+                "video.fallback" -> { status = msg.optString("message"); compatibility = true }
+                "audio.stopped" -> { status = msg.optString("message", "Audio stopped") }
+                "source.ready" -> { phoneSharing = true; projectionPending = false; status = "Phone is live on your computer" }
+                "source.stopped", "source.localStopped" -> {
+                    phoneSharing = false; projectionPending = false; activity.keepProjectionConnection(false)
+                    status = msg.optString("message", "Phone sharing stopped")
+                }
+                "stopped" -> { live = false; busy = false; bitmap = null; status = msg.optString("message", "Returned to computer") }
+                "error" -> {
+                    busy = false
+                    if (projectionPending) { projectionPending = false; activity.keepProjectionConnection(false) }
+                    status = msg.optString("message", "Try again")
                 }
             }
-            .pointerInput(enabled) {
-                if (enabled) detectDragGestures(
-                    onDragEnd = { },
-                    onDrag = { change, drag ->
-                        change.consume()
-                        if (abs(drag.y) > abs(drag.x)) client.scroll(0f, -drag.y / size.height)
-                    }
-                )
-            }
-    ) {
-        val cols = 8
-        val rows = 5
-        for (x in 1 until cols) drawLine(Color.DarkGray, Offset(size.width * x / cols, 0f), Offset(size.width * x / cols, size.height))
-        for (y in 1 until rows) drawLine(Color.DarkGray, Offset(0f, size.height * y / rows), Offset(size.width, size.height * y / rows))
-        val cx = size.width * (0.1f + 0.8f * phase)
-        drawCircle(Color.White, radius = 18.dp.toPx(), center = Offset(cx, size.height / 2f))
+        })
     }
+    LaunchedEffect(client) {
+        while (true) {
+            controlEnabled = RemoteControlService.enabled()
+            client.refreshPhoneControls()
+            kotlinx.coroutines.delay(500)
+        }
+    }
+    DisposableEffect(client) {
+        bindBackground { client.close(); connected = false; live = false; busy = false; bitmap = null; windows = emptyList(); status = "Paused · Reconnect to continue" }
+        onDispose { bindBackground(null); client.dispose() }
+    }
+    DisposableEffect(live) {
+        if (live) activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
+    fun pair(raw: String) {
+        try { val link = Pairing.parse(raw); pairingText = ""; client.pair(link) }
+        catch (e: Exception) { status = e.message ?: "That pairing link is invalid" }
+    }
+    val export = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { it.write(client.report().toString(2).toByteArray()) }
+                status = "Session report saved"
+            } catch (_: Exception) { status = "Could not save the report" }
+        }
+    }
+    val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let { pair(it) } }
+    val projectionLauncher = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val bounds = if (android.os.Build.VERSION.SDK_INT >= 30) activity.windowManager.maximumWindowMetrics.bounds
+                         else android.graphics.Rect(0, 0, context.resources.displayMetrics.widthPixels, context.resources.displayMetrics.heightPixels)
+            val rawWidth = bounds.width(); val rawHeight = bounds.height()
+            val scale = minOf(1f, 1280f / maxOf(rawWidth, rawHeight), 720f / minOf(rawWidth, rawHeight))
+            val width = maxOf(2, (rawWidth * scale).toInt() / 2 * 2)
+            val height = maxOf(2, (rawHeight * scale).toInt() / 2 * 2)
+            client.beginPhoneShare(context, result.resultCode, result.data!!, width, height, phoneAudio)
+            status = "Starting secure phone stream…"
+        } else {
+            projectionPending = false; activity.keepProjectionConnection(false); status = "Phone sharing cancelled"
+        }
+    }
+    fun requestProjection() {
+        projectionPending = true; activity.keepProjectionConnection(true)
+        val manager = context.getSystemService(MediaProjectionManager::class.java)
+        projectionLauncher.launch(manager.createScreenCaptureIntent())
+    }
+    val audioPermission = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) requestProjection()
+        else { projectionPending = false; activity.keepProjectionConnection(false); status = "Audio permission denied; turn phone audio off to share video only" }
+    }
+    BackHandler(live) { client.stop() }
+    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    val scheme = if (dark) darkColorScheme(primary = Color(0xFF77D8C4), background = Color(0xFF111918), surface = Color(0xFF182321))
+                 else lightColorScheme(primary = Color(0xFF006B58), background = Color(0xFFF6F9F7), surface = Color.White)
+    MaterialTheme(colorScheme = scheme) {
+        if (showControlHelp) AlertDialog(
+            onDismissRequest = { showControlHelp = false },
+            title = { Text("Allow laptop control") },
+            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Screen sharing lets your laptop see the phone. Android Accessibility separately allows clicks, swipes and typing during your paired HandOff session.")
+                Text("Open Accessibility → Installed apps / Downloaded apps → HandOff phone control → Use service. Return here afterwards; the status will update automatically.")
+                Text("If Android says Restricted setting: open App info → ⋮ → Allow restricted settings, then return to Accessibility. Only enable this for a HandOff APK you trust.")
+                Text("For accurate control, choose Entire screen in Android’s sharing prompt. You can stop sharing at any time.")
+            } },
+            confirmButton = { TextButton(onClick = {
+                showControlHelp = false
+                activity.keepSettingsConnection()
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                context.startActivity(intent)
+            }) { Text("Open Accessibility") } },
+            dismissButton = { TextButton(onClick = {
+                activity.keepSettingsConnection()
+                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.parse("package:${context.packageName}")))
+            }) { Text("App info") } }
+        )
+        Scaffold { padding ->
+            if (live) {
+                Column(Modifier.fillMaxSize().padding(padding).background(Color.Black)) {
+                    Surface {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(title, Modifier.weight(1f), maxLines = 1, fontWeight = FontWeight.SemiBold)
+                                TextButton(onClick = { client.stop() }) { Text("Return") }
+                            }
+                            Text(status, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        if (videoCodec == "h264") LiveVideo(videoSize, sequence, client, dragMode)
+                        else bitmap?.let { frame -> LiveImage(frame, sequence, client, dragMode) } ?: CircularProgressIndicator()
+                    }
+                    Surface(color = MaterialTheme.colorScheme.surface) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                FilterChip(selected = !dragMode, onClick = { dragMode = false }, label = { Text("Scroll") })
+                                Spacer(Modifier.width(8.dp))
+                                FilterChip(selected = dragMode, onClick = { dragMode = true }, label = { Text("Drag") })
+                                Spacer(Modifier.weight(1f))
+                                Text(if (dragMode) "Swipe drags on the computer" else "Swipe scrolls", style = MaterialTheme.typography.labelSmall)
+                            }
+                            if (keyboardSupported) {
+                                OutlinedTextField(textEntry, { textEntry = it.take(256) }, modifier = Modifier.fillMaxWidth(),
+                                    placeholder = { Text("Type on computer") }, singleLine = true,
+                                    trailingIcon = { TextButton(onClick = { if (textEntry.isNotEmpty()) { client.text(textEntry, sequence); textEntry = "" } }) { Text("Send") } })
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    TextButton(onClick = { client.key("backspace", sequence) }) { Text("⌫") }
+                                    TextButton(onClick = { client.key("enter", sequence) }) { Text("Enter") }
+                                    TextButton(onClick = { client.key("escape", sequence) }) { Text("Esc") }
+                                    TextButton(onClick = { client.key("left", sequence) }) { Text("←") }
+                                    TextButton(onClick = { client.key("right", sequence) }) { Text("→") }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                    item {
+                        Spacer(Modifier.height(24.dp))
+                        Text("HANDOFF", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.height(10.dp))
+                        Text("Pick up where\nyou left off.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(8.dp))
+                        Text("Bring a running computer app—or an entire display you explicitly approve—to your phone.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    item {
+                        ElevatedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(if (connected) "Your computer is connected" else "Your computer", style = MaterialTheme.typography.titleLarge)
+                                Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                                if (connected) {
+                                    Row {
+                                        TextButton(onClick = { client.send("windows") }) { Text("Refresh apps") }
+                                        TextButton(onClick = { client.close(); connected = false; busy = false; windows = emptyList(); status = "Disconnected" }) { Text("Disconnect") }
+                                    }
+                                } else if (busy) {
+                                    TextButton(onClick = { client.close(); busy = false; status = "Connection cancelled" }) { Text("Cancel") }
+                                } else {
+                                    paired?.let { c ->
+                                        Button(onClick = { client.reconnect(c) }, modifier = Modifier.fillMaxWidth()) { Text("Connect to ${c.host}") }
+                                    }
+                                    OutlinedButton(onClick = { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the QR code in HandOff on your computer").setBeepEnabled(false)) }, modifier = Modifier.fillMaxWidth()) { Text("Pair with QR code") }
+                                    TextButton(onClick = { showManual = !showManual }) { Text("Use a pairing link") }
+                                    if (showManual) {
+                                        OutlinedTextField(pairingText, { pairingText = it }, label = { Text("Paste pairing link") }, modifier = Modifier.fillMaxWidth(), maxLines = 3)
+                                        Button(onClick = { pair(pairingText) }, enabled = pairingText.isNotBlank()) { Text("Pair computer") }
+                                    }
+                                    if (paired != null) TextButton(onClick = { store.clear(); paired = null; status = "Computer forgotten" }) { Text("Forget computer") }
+                                }
+                            }
+                        }
+                    }
+                    if (connected) {
+                        item {
+                            ElevatedCard(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text("Use phone on computer", style = MaterialTheme.typography.titleLarge)
+                                    Text("Android will ask whether to share one app or the whole phone. Nothing starts without that system confirmation.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Checkbox(phoneAudio, { phoneAudio = it }, enabled = !phoneSharing && !projectionPending)
+                                        Text("Share phone media audio")
+                                    }
+                                    if (phoneAudio) Text("Android calls this permission ‘Record audio’. HandOff captures allowed app playback, not the microphone.", style = MaterialTheme.typography.bodySmall)
+                                    Text(if (controlEnabled) "Laptop control is ready" else "View only · laptop control needs Accessibility", style = MaterialTheme.typography.bodySmall)
+                                    TextButton(onClick = { showControlHelp = true }) { Text(if (controlEnabled) "Control settings" else "Set up laptop control") }
+                                    if (phoneSharing) Button(onClick = { PhoneProjectionService.stop(context) }, modifier = Modifier.fillMaxWidth()) { Text("Return to phone") }
+                                    else Button(onClick = {
+                                        if (phoneAudio && androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+                                            { activity.keepProjectionConnection(true); audioPermission.launch(Manifest.permission.RECORD_AUDIO) }
+                                        else requestProjection()
+                                    }, enabled = !projectionPending && !live, modifier = Modifier.fillMaxWidth()) {
+                                        Text(if (projectionPending) "Waiting for Android…" else "Share phone to computer")
+                                    }
+                                }
+                            }
+                        }
+                        item {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = compatibility, onCheckedChange = { compatibility = it }, enabled = !busy)
+                                Text("Compatibility video (JPEG)")
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = audioChoice, onCheckedChange = { audioChoice = it }, enabled = !busy)
+                                Text("Play computer audio (all apps)")
+                            }
+                            Text("Audio also needs approval on your computer.", style = MaterialTheme.typography.bodySmall)
+                            Text("Streaming", style = MaterialTheme.typography.titleSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf("smooth" to "Smooth", "balanced" to "Balanced", "sharp" to "Sharp").forEach { choice ->
+                                    FilterChip(selected = profile == choice.first, onClick = { profile = choice.first }, label = { Text(choice.second) })
+                                }
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            Text("Shared with you", style = MaterialTheme.typography.titleLarge)
+                        }
+                        if (windows.isEmpty()) item { Text("Select an app or display in HandOff on your computer, click Share selected, then refresh here.") }
+                        items(windows, key = { it.id }) { window ->
+                            OutlinedCard(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(window.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                    Text(if (window.kind == "display") "Everything visible on this display" else window.app, style = MaterialTheme.typography.bodySmall)
+                                    Button(onClick = { title = window.title; busy = true; status = "Opening your app…"; client.start(window.id, compatibility, audioChoice, profile) }, enabled = !busy && !phoneSharing && !projectionPending) { Text("Continue here") }
+                                }
+                            }
+                        }
+                    }
+                    item { UpdateCard(activity) }
+                    item {
+                        TextButton(onClick = { export.launch("handoff-session.json") }, enabled = client.report().optInt("decoded_frames") > 0) { Text("Export session report") }
+                        Text("Private by design", style = MaterialTheme.typography.titleMedium)
+                        Text("Pair directly with your computer. Only the app or display you explicitly choose is shared over your local network. Stop sharing on either device at any time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(24.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveImage(frame: Bitmap, sequence: Int, client: ProtocolClient, dragMode: Boolean) {
+    Image(frame.asImageBitmap(), contentDescription = "Shared application", contentScale = ContentScale.Fit,
+        modifier = Modifier.fillMaxSize().remoteInput(frame.width, frame.height, sequence, client, dragMode))
+}
+
+@Composable
+private fun LiveVideo(dimensions: Pair<Int, Int>, sequence: Int, client: ProtocolClient, dragMode: Boolean) {
+    BoxWithConstraints(Modifier.fillMaxSize().remoteInput(dimensions.first, dimensions.second, sequence, client, dragMode), contentAlignment = Alignment.Center) {
+        val ratio = dimensions.first.toFloat() / dimensions.second
+        val width = minOf(maxWidth, maxHeight * ratio)
+        AndroidView(modifier = Modifier.size(width, width / ratio), factory = { context ->
+            SurfaceView(context).also { view ->
+                view.holder.addCallback(object : SurfaceHolder.Callback {
+                    override fun surfaceCreated(holder: SurfaceHolder) { client.setSurface(holder.surface) }
+                    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) { client.setSurface(holder.surface) }
+                    override fun surfaceDestroyed(holder: SurfaceHolder) { client.setSurface(null) }
+                })
+            }
+        })
+    }
+}
+
+@Composable
+private fun Modifier.remoteInput(width: Int, height: Int, sequence: Int, client: ProtocolClient, dragMode: Boolean): Modifier {
+    val currentSequence by rememberUpdatedState(sequence)
+    val dimensions by rememberUpdatedState(width to height)
+    return this
+        .pointerInput(Unit) {
+            detectTapGestures { point ->
+                contentPoint(point.x, point.y, size.width.toFloat(), size.height.toFloat(), dimensions.first, dimensions.second)
+                    ?.let { client.tap(it.first, it.second, currentSequence) }
+            }
+        }
+        .pointerInput(dragMode) {
+            var accumulated = 0f
+            var start: Pair<Float, Float>? = null
+            var end: Pair<Float, Float>? = null
+            detectDragGestures(onDragStart = { point ->
+                accumulated = 0f
+                start = contentPoint(point.x, point.y, size.width.toFloat(), size.height.toFloat(), dimensions.first, dimensions.second)
+                end = start
+            }, onDragEnd = {
+                if (dragMode) start?.let { from -> end?.let { to -> client.drag(from.first, from.second, to.first, to.second, currentSequence) } }
+            }, onDrag = { change, drag ->
+                change.consume()
+                end = contentPoint(change.position.x, change.position.y, size.width.toFloat(), size.height.toFloat(), dimensions.first, dimensions.second)
+                accumulated += drag.y
+                if (!dragMode && kotlin.math.abs(accumulated) >= 24f) {
+                    contentPoint(change.position.x, change.position.y, size.width.toFloat(), size.height.toFloat(), dimensions.first, dimensions.second)
+                        ?.let { client.scroll(it.first, it.second, (-accumulated / 60f).coerceIn(-5f, 5f), currentSequence) }
+                    accumulated = 0f
+                }
+            })
+        }
 }

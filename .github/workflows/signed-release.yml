@@ -1,0 +1,112 @@
+name: Signed release candidate
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Exact tested 40-character commit SHA
+        required: true
+        type: string
+      report_base64:
+        description: Base64 of the exported physical Android session report
+        required: true
+        type: string
+      checked_quality:
+        description: I checked visible video, audible sound, input and repeated Return on real devices
+        required: true
+        default: false
+        type: boolean
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    env:
+      REVISION: ${{ inputs.revision }}
+      REPORT_BASE64: ${{ inputs.report_base64 }}
+      CHECKED: ${{ inputs.checked_quality }}
+    steps:
+      - name: Validate dispatch inputs
+        run: |
+          python - <<'PY'
+          import os, re
+          assert re.fullmatch('[0-9a-f]{40}', os.environ['REVISION']), 'Exact commit SHA required'
+          assert os.environ['CHECKED'] == 'true', 'Physical quality checks must be completed'
+          PY
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision }}
+      - name: Check physical session evidence
+        run: |
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          Path(os.environ['RUNNER_TEMP'], 'session.json').write_bytes(base64.b64decode(os.environ['REPORT_BASE64'], validate=True))
+          PY
+          python tools/validate_session.py "$RUNNER_TEMP/session.json" --revision "$REVISION"
+  android:
+    needs: evidence
+    runs-on: ubuntu-latest
+    env:
+      HANDOFF_SOURCE_REVISION: ${{ inputs.revision }}
+      ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      ANDROID_SIGNING_SHA256: ${{ secrets.ANDROID_SIGNING_SHA256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision }}
+      - name: Require configured release identity
+        run: python tools/prepare_signing.py android
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - run: gradle -p android :app:testReleaseUnitTest :app:lintRelease :app:assembleRelease
+      - name: Verify APK signature and publisher fingerprint
+        run: python tools/verify_android_signature.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HandOff-Android-signed
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+      - name: Remove signing file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/handoff-release.jks"
+  windows:
+    needs: evidence
+    runs-on: windows-latest
+    env:
+      WINDOWS_CERT_PFX_B64: ${{ secrets.WINDOWS_CERT_PFX_B64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Require configured publisher certificate
+        run: python tools/prepare_signing.py windows
+      - run: python -m pip install -r host/requirements.txt pyinstaller==6.16.0
+      - run: python -m unittest discover -s tests -v
+      - run: python -m PyInstaller --noconfirm --clean --onedir --windowed --name HandOff --paths . --collect-all av --collect-all soundcard host/launcher.py
+      - name: Sign and verify trusted publisher
+        run: ./tools/sign_windows.ps1
+      - name: Launch signed app
+        run: python tools/smoke_windows.py dist/HandOff/HandOff.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HandOff-Windows-signed
+          path: dist/HandOff/
+          if-no-files-found: error
+      - name: Remove signing file
+        if: always()
+        shell: pwsh
+        run: Remove-Item (Join-Path $env:RUNNER_TEMP 'handoff-release.pfx') -ErrorAction SilentlyContinue

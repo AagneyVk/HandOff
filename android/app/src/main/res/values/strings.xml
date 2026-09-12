@@ -1,0 +1,3 @@
+<resources>
+    <string name="accessibility_description">Allow your paired laptop to tap, swipe and type on this phone while you explicitly share its screen through HandOff. This service reads the focused text field to support typing. Stop sharing in HandOff or its notification to end remote control. Screen recording permission is requested separately.</string>
+</resources>

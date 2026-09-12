@@ -1,0 +1,7 @@
+cryptography==46.0.0
+Pillow==12.3.0
+qrcode==8.2
+python-xlib==0.33; sys_platform == 'linux'
+av==16.0.1
+SoundCard==0.4.6
+numpy==2.2.6
