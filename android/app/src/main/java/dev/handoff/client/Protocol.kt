@@ -50,6 +50,18 @@ class ProtocolClient(
     @Volatile private var sourceContext: Context? = null
     private val sourceSequence = AtomicLong()
     private val sourceAudioPending = AtomicBoolean()
+    @Volatile private var lastSourceControls: Boolean? = null
+    private var lastSourceAck = 0L
+    @Volatile private var fallbackPending = false
+    private data class DesktopRequest(val window: String, val audio: Boolean, val profile: String)
+    @Volatile private var desktopRequest: DesktopRequest? = null
+    fun refreshPhoneControls() {
+        val active = sourceSession ?: return
+        val enabled = RemoteControlService.enabled()
+        if (lastSourceControls == enabled) return
+        lastSourceControls = enabled
+        send("source.controls", JSONObject().put("session", active).put("controls", enabled))
+    }
     private data class ProjectionRequest(val context: Context, val resultCode: Int, val data: Intent,
         val width: Int, val height: Int, val audio: Boolean)
     @Volatile private var projectionRequest: ProjectionRequest? = null
@@ -82,8 +94,9 @@ class ProtocolClient(
                 val tls = context.socketFactory.createSocket(raw, host, port, true) as SSLSocket
                 tls.enabledProtocols = tls.supportedProtocols.filter { it == "TLSv1.2" || it == "TLSv1.3" }.toTypedArray()
                 tls.soTimeout = 10000
+                tls.tcpNoDelay = true
                 tls.startHandshake()
-                val out = DataOutputStream(tls.outputStream)
+                val out = DataOutputStream(java.io.BufferedOutputStream(tls.outputStream, 65536))
                 val input = DataInputStream(tls.inputStream)
                 Wire.write(out, auth.put("v", 1).toString().toByteArray(Charsets.UTF_8))
                 val first = readJson(input)
@@ -105,22 +118,33 @@ class ProtocolClient(
                     when (msg.getString("type")) {
                         "started" -> { session = msg.getString("session"); report.start(msg.optString("codec"),
                             msg.optString("encoder"), msg.optString("profile", "balanced"), msg.optString("target", "window")) }
-                        "stopped" -> { report.stop(); session = null; decoder?.close(); decoder = null; decoderSize = null; player?.close(); player = null }
+                        "stopped" -> {
+                            report.stop(); session = null; decoder?.close(); decoder = null; decoderSize = null; player?.close(); player = null
+                            if (fallbackPending) {
+                                fallbackPending = false
+                                desktopRequest?.let { start(it.window, true, it.audio, it.profile) }
+                                continue
+                            }
+                        }
                         "audio.stopped" -> { player?.close(); player = null }
                         "source.ready" -> {
                             val request = projectionRequest ?: error("Phone projection request expired")
-                            sourceSession = msg.getString("session"); sourceSequence.set(0)
+                            sourceSession = msg.getString("session"); sourceSequence.set(0); lastSourceAck = 0; lastSourceControls = null
+                            refreshPhoneControls()
                             PhoneProjectionService.start(request.context, request.resultCode, request.data,
                                 request.width, request.height, request.audio)
                         }
                         "source.ack" -> {
                             require(msg.getString("session") == sourceSession) { "Stale phone frame acknowledgement" }
+                            val ack = msg.getLong("sequence")
+                            require(ack == lastSourceAck + 1 && ack <= sourceSequence.get()) { "Invalid phone frame acknowledgement" }
+                            lastSourceAck = ack
                             PhoneSourceBus.requestFrame(); continue
                         }
                         "source.stopped" -> {
                             sourceSession = null; projectionRequest = null
                         }
-                        "phone.stop" -> { sourceContext?.let { PhoneProjectionService.stop(it) }; continue }
+                        "phone.stop" -> { requirePhoneSession(msg); sourceContext?.let { PhoneProjectionService.stop(it) }; continue }
                         "phone.tap" -> {
                             requirePhoneSession(msg); RemoteControlService.tap(msg.getDouble("x").toFloat(), msg.getDouble("y").toFloat()); continue
                         }
@@ -162,7 +186,8 @@ class ProtocolClient(
                             if (kind == 3) {
                                 val width = msg.getInt("width"); val height = msg.getInt("height")
                                 require(width in 2..1920 && height in 2..1080 && msg.getString("codec") == "h264") { "Invalid H.264 format" }
-                                if (decoder == null || decoderSize != (width to height)) {
+                                try {
+                                if (decoder == null || decoderSize != (width to height) || decoder?.isSurface(surface) != true) {
                                     decoder?.close(); decoder = null
                                     val deadline = SystemClock.elapsedRealtime() + 3000
                                     while ((surface == null || surface?.isValid != true) && generation.get() == epoch && SystemClock.elapsedRealtime() < deadline) Thread.sleep(10)
@@ -171,6 +196,15 @@ class ProtocolClient(
                                     decoderSize = width to height
                                 }
                                 decoder.render(bytes, sequence)
+                                } catch (e: Exception) {
+                                    if (generation.get() != epoch) throw e
+                                    report.error()
+                                    fallbackPending = true
+                                    send("stop", includeSession = true)
+                                    main.post { if (generation.get() == epoch && !disposed)
+                                        onMessage(JSONObject().put("type", "video.fallback").put("message", "Switching to compatibility video…")) }
+                                    continue
+                                }
                                 report.video(bytes.size)
                                 main.post { if (generation.get() == epoch && !disposed) onVideoFrame(width, height, sequence) }
                                 send("ack", JSONObject().put("sequence", sequence), true)
@@ -259,7 +293,7 @@ class ProtocolClient(
                 } catch (_: Exception) { synchronized(this) { try { socket?.close() } catch (_: Exception) {} } }
                 finally { done() }
             }
-        } catch (_: RejectedExecutionException) { done() }
+        } catch (_: RejectedExecutionException) { done(); close() }
     }
 
     fun send(type: String, payload: JSONObject = JSONObject(), includeSession: Boolean = false) {
@@ -287,11 +321,12 @@ class ProtocolClient(
     }
     fun start(window: String, compatibility: Boolean = false, audio: Boolean = false, profile: String = "balanced") {
         audioAllowed = audio
+        desktopRequest = DesktopRequest(window, audio, profile)
         send("start", JSONObject().put("window", window)
             .put("codecs", org.json.JSONArray(if (compatibility) listOf("jpeg") else listOf("h264", "jpeg")))
             .put("audio", audio).put("profile", profile))
     }
-    fun stop() = send("stop", includeSession = true)
+    fun stop() { fallbackPending = false; send("stop", includeSession = true) }
     fun tap(x: Float, y: Float, sequence: Int) = send("tap", JSONObject().put("x", x).put("y", y).put("sequence", sequence), true)
     fun scroll(x: Float, y: Float, dy: Float, sequence: Int) = send("scroll", JSONObject().put("x", x).put("y", y).put("dy", dy).put("sequence", sequence), true)
     fun drag(x0: Float, y0: Float, x1: Float, y1: Float, sequence: Int) = send("drag",
@@ -302,6 +337,7 @@ class ProtocolClient(
         report.stop()
         sourceContext?.let { if (sourceSession != null) PhoneProjectionService.stop(it) }
         PhoneSourceBus.sink = null; sourceSession = null; projectionRequest = null
+        fallbackPending = false; desktopRequest = null; lastSourceControls = null
         generation.incrementAndGet()
         try { socket?.close() } catch (_: Exception) { }
         socket = null; writer = null; session = null

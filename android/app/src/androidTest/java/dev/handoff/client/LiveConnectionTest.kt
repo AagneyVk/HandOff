@@ -13,6 +13,21 @@ import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(AndroidJUnit4::class)
 class LiveConnectionTest {
+    @Test fun phoneControlServiceIsDiscoverableAndProtected() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val component = android.content.ComponentName(context, RemoteControlService::class.java)
+        @Suppress("DEPRECATION")
+        val service = context.packageManager.getServiceInfo(component, android.content.pm.PackageManager.GET_META_DATA)
+        assertTrue(service.exported)
+        assertEquals("android.permission.BIND_ACCESSIBILITY_SERVICE", service.permission)
+        val manager = context.getSystemService(android.view.accessibility.AccessibilityManager::class.java)
+        val discovered = manager.installedAccessibilityServiceList.firstOrNull {
+            it.resolveInfo.serviceInfo.name == RemoteControlService::class.java.name
+        }
+        assertNotNull("HandOff control is missing from Android Accessibility settings", discovered)
+        assertTrue(discovered!!.capabilities and android.accessibilityservice.AccessibilityServiceInfo.CAPABILITY_CAN_PERFORM_GESTURES != 0)
+    }
+
     @Test fun pairDecodeReturnAndReconnectOverPinnedTls() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -23,6 +38,7 @@ class LiveConnectionTest {
         store.clear()
         val paired = CountDownLatch(1)
         val frames = CountDownLatch(2)
+        val fallbackFrames = CountDownLatch(2)
         val audio = CountDownLatch(2)
         val h264Frames = AtomicInteger()
         // Drain decoded output just as SurfaceView's compositor does in the app.
@@ -50,6 +66,7 @@ class LiveConnectionTest {
                 if (bitmap.width != 64 || bitmap.height != 48 || Color.green(bitmap.getPixel(20, 20)) < 170)
                     failure.set("Decoded frame does not match the host fixture")
                 frames.countDown()
+                fallbackFrames.countDown()
             })
             client.setSurface(surface)
             client.pair(Pairing.parse(raw))
@@ -66,6 +83,9 @@ class LiveConnectionTest {
             client.close()
             client.reconnect(store.load()!!)
             assertTrue("Reconnect timed out: ${failure.get()}", reconnected.await(15, TimeUnit.SECONDS))
+            client.setSurface(null)
+            client.start("win32:7")
+            assertTrue("Missing surface did not recover to JPEG: ${failure.get()}", fallbackFrames.await(20, TimeUnit.SECONDS))
             assertNull(failure.get())
         } finally { client.dispose(); store.clear(); images.close() }
     }

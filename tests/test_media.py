@@ -44,6 +44,12 @@ class MediaTests(unittest.TestCase):
         owner = object(); presenter.start(owner, 64, 48, False, True)
         self.assertTrue(presenter.feed_video(data))
         self.assertEqual(presenter.image.size, (64, 48))
+        for _ in range(12):
+            self.assertTrue(presenter.feed_video(encoder.encode(Image.new('RGB', (64, 48), 'red'))[0]))
+        self.assertEqual(presenter.ui_queue.qsize(), 1, 'Rendering must coalesce, not queue every frame')
+        self.assertTrue(presenter.dirty.is_set())
+        presenter.set_controls(owner, False)
+        self.assertFalse(presenter.controls)
         presenter.stop(owner)
 
     def test_audio_clamps_nonfinite_and_has_fixed_little_endian_layout(self):

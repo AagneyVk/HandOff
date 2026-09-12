@@ -16,6 +16,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -40,12 +42,15 @@ import com.journeyapps.barcodescanner.ScanOptions
 class MainActivity : ComponentActivity() {
     private var background: (() -> Unit)? = null
     private var projectionFlow = false
+    private var settingsFlow = false
+    fun keepSettingsConnection() { settingsFlow = true }
+    override fun onResume() { super.onResume(); settingsFlow = false }
     fun keepProjectionConnection(value: Boolean) { projectionFlow = value }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { HandOffApp(this) { background = it } }
     }
-    override fun onStop() { if (!projectionFlow) background?.invoke(); super.onStop() }
+    override fun onStop() { if (!projectionFlow && !settingsFlow) background?.invoke(); super.onStop() }
 }
 private data class AppWindow(val id: String, val title: String, val app: String, val kind: String)
 
@@ -75,6 +80,8 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
     var phoneSharing by remember { mutableStateOf(false) }
     var phoneAudio by remember { mutableStateOf(false) }
     var projectionPending by remember { mutableStateOf(false) }
+    var controlEnabled by remember { mutableStateOf(RemoteControlService.enabled()) }
+    var showControlHelp by remember { mutableStateOf(false) }
     val client = remember {
         ProtocolClient(store, onState = { value ->
             status = value
@@ -98,6 +105,7 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                     live = true; busy = false
                     status = if (videoCodec == "h264") "H.264 · ${msg.optString("encoder")}" else "Compatibility video · JPEG"
                 }
+                "video.fallback" -> { status = msg.optString("message"); compatibility = true }
                 "audio.stopped" -> { status = msg.optString("message", "Audio stopped") }
                 "source.ready" -> { phoneSharing = true; projectionPending = false; status = "Phone is live on your computer" }
                 "source.stopped", "source.localStopped" -> {
@@ -112,6 +120,13 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                 }
             }
         })
+    }
+    LaunchedEffect(client) {
+        while (true) {
+            controlEnabled = RemoteControlService.enabled()
+            client.refreshPhoneControls()
+            kotlinx.coroutines.delay(500)
+        }
     }
     DisposableEffect(client) {
         bindBackground { client.close(); connected = false; live = false; busy = false; bitmap = null; windows = emptyList(); status = "Paused · Reconnect to continue" }
@@ -162,6 +177,27 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
     val scheme = if (dark) darkColorScheme(primary = Color(0xFF77D8C4), background = Color(0xFF111918), surface = Color(0xFF182321))
                  else lightColorScheme(primary = Color(0xFF006B58), background = Color(0xFFF6F9F7), surface = Color.White)
     MaterialTheme(colorScheme = scheme) {
+        if (showControlHelp) AlertDialog(
+            onDismissRequest = { showControlHelp = false },
+            title = { Text("Allow laptop control") },
+            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Screen sharing lets your laptop see the phone. Android Accessibility separately allows clicks, swipes and typing during your paired HandOff session.")
+                Text("Open Accessibility → Installed apps / Downloaded apps → HandOff phone control → Use service. Return here afterwards; the status will update automatically.")
+                Text("If Android says Restricted setting: open App info → ⋮ → Allow restricted settings, then return to Accessibility. Only enable this for a HandOff APK you trust.")
+                Text("For accurate control, choose Entire screen in Android’s sharing prompt. You can stop sharing at any time.")
+            } },
+            confirmButton = { TextButton(onClick = {
+                showControlHelp = false
+                activity.keepSettingsConnection()
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                context.startActivity(intent)
+            }) { Text("Open Accessibility") } },
+            dismissButton = { TextButton(onClick = {
+                activity.keepSettingsConnection()
+                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.parse("package:${context.packageName}")))
+            }) { Text("App info") } }
+        )
         Scaffold { padding ->
             if (live) {
                 Column(Modifier.fillMaxSize().padding(padding).background(Color.Black)) {
@@ -250,12 +286,13 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                                         Checkbox(phoneAudio, { phoneAudio = it }, enabled = !phoneSharing && !projectionPending)
                                         Text("Share phone media audio")
                                     }
-                                    Text(if (RemoteControlService.enabled()) "Computer control is enabled" else "Viewing works now. Enable HandOff Accessibility for mouse and keyboard control.", style = MaterialTheme.typography.bodySmall)
-                                    if (!RemoteControlService.enabled()) TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("Enable phone control") }
+                                    if (phoneAudio) Text("Android calls this permission ‘Record audio’. HandOff captures allowed app playback, not the microphone.", style = MaterialTheme.typography.bodySmall)
+                                    Text(if (controlEnabled) "Laptop control is ready" else "View only · laptop control needs Accessibility", style = MaterialTheme.typography.bodySmall)
+                                    TextButton(onClick = { showControlHelp = true }) { Text(if (controlEnabled) "Control settings" else "Set up laptop control") }
                                     if (phoneSharing) Button(onClick = { PhoneProjectionService.stop(context) }, modifier = Modifier.fillMaxWidth()) { Text("Return to phone") }
                                     else Button(onClick = {
                                         if (phoneAudio && androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
-                                            audioPermission.launch(Manifest.permission.RECORD_AUDIO)
+                                            { activity.keepProjectionConnection(true); audioPermission.launch(Manifest.permission.RECORD_AUDIO) }
                                         else requestProjection()
                                     }, enabled = !projectionPending && !live, modifier = Modifier.fillMaxWidth()) {
                                         Text(if (projectionPending) "Waiting for Android…" else "Share phone to computer")
@@ -288,7 +325,7 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text(window.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                                     Text(if (window.kind == "display") "Everything visible on this display" else window.app, style = MaterialTheme.typography.bodySmall)
-                                    Button(onClick = { title = window.title; busy = true; status = "Opening your app…"; client.start(window.id, compatibility, audioChoice, profile) }, enabled = !busy) { Text("Continue here") }
+                                    Button(onClick = { title = window.title; busy = true; status = "Opening your app…"; client.start(window.id, compatibility, audioChoice, profile) }, enabled = !busy && !phoneSharing && !projectionPending) { Text("Continue here") }
                                 }
                             }
                         }

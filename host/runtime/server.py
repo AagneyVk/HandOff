@@ -81,6 +81,7 @@ class Connection:
         self.source_session = None
         self.source_sequence = 0
         self.source_controls = False
+        self.announced_selection = host.approved
 
     async def send(self, type_, **kwargs):
         async with self.lock:
@@ -116,19 +117,30 @@ class Connection:
     async def watch_authorization(self):
         while True:
             await asyncio.sleep(.2)
+            if not self.session and self.host.approved != self.announced_selection:
+                await self.send_windows()
+            if self.source_session and not self.host.trust.trusted(self.device):
+                self.stop_source()
+                await self.send('source.stopped', message='Phone authorization removed.')
             if self.session and (self.host.approved != self.selection or not self.host.trust.trusted(self.device)):
                 await self.stop()
                 await self.send('stopped', message='Sharing stopped on your computer.')
+
+    async def send_windows(self):
+        selected = self.host.approved
+        windows = [w.payload() for w in self.host.catalog() if selected and w.id == selected[0]]
+        self.announced_selection = selected
+        await self.send('windows', windows=windows[:1])
 
     async def dispatch(self, msg):
         type_ = msg['type']
         if type_ == 'ping':
             await self.send('pong')
         elif type_ == 'windows':
-            selected = self.host.approved
-            windows = [w.payload() for w in self.host.catalog() if selected and w.id == selected[0]]
-            await self.send('windows', windows=windows[:1])
+            await self.send_windows()
         elif type_ == 'start':
+            if self.source_session:
+                raise ValueError('Return the phone screen before opening the computer.')
             if self.session:
                 raise ValueError('Return the current app before starting another.')
             selection = self.host.approved
@@ -140,6 +152,7 @@ class Connection:
                 raise ValueError('The app changed. Share it again on your computer.')
             self.host.owner = self
             self.selection = selection
+            self.announced_selection = selection
             self.session = secrets.token_hex(16)
             self.sequence = self.shown_sequence = 0
             try:
@@ -232,6 +245,11 @@ class Connection:
                 await self.send('source.ready', session=self.source_session)
             except BaseException:
                 self.stop_source(); raise
+        elif type_ == 'source.controls':
+            self.validate_source(msg)
+            if type(msg.get('controls')) is not bool: raise ValueError('Invalid control availability.')
+            self.source_controls = msg['controls']
+            self.host.phone_presenter.set_controls(self, self.source_controls)
         elif type_ == 'source.frame':
             self.validate_source(msg)
             sequence = msg.get('sequence')

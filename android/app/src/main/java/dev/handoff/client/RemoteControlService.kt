@@ -26,10 +26,17 @@ class RemoteControlService : AccessibilityService() {
     override fun onServiceConnected() { current = this }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
     override fun onInterrupt() = Unit
+    override fun onDestroy() { if (current === this) current = null; super.onDestroy() }
     override fun onUnbind(intent: android.content.Intent?): Boolean { if (current === this) current = null; return false }
 
     private fun size(): Pair<Float, Float> {
-        val metrics = resources.displayMetrics
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            val bounds = getSystemService(android.view.WindowManager::class.java).maximumWindowMetrics.bounds
+            return bounds.width().toFloat() to bounds.height().toFloat()
+        }
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        getSystemService(android.view.WindowManager::class.java).defaultDisplay.getRealMetrics(metrics)
         return metrics.widthPixels.toFloat() to metrics.heightPixels.toFloat()
     }
 

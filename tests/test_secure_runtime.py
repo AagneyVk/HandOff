@@ -225,6 +225,35 @@ class SecureRuntimeTests(unittest.IsolatedAsyncioTestCase):
         presenter.feed_audio.assert_called_once_with(bytes(3840))
         self.assertIsNone(self.host.phone_owner)
 
+    async def test_approved_target_is_announced_without_refresh(self):
+        await self.pair()
+        self.host.approve('win32:7')
+        update = await self.receive()
+        self.assertEqual(update['type'], 'windows')
+        self.assertEqual(update['windows'][0]['id'], 'win32:7')
+        self.host.stop()
+        self.assertEqual((await self.receive())['windows'], [])
+
+    async def test_control_permission_changes_during_phone_session(self):
+        await self.pair()
+        self.host.phone_presenter = Mock()
+        await self.send('source.start', width=720, height=1280, codec='h264', controls=False)
+        session = (await self.receive())['session']
+        await self.send('source.controls', session=session, controls=True)
+        await self.send('ping')
+        self.assertEqual((await self.receive())['type'], 'pong')
+        self.host.phone_presenter.set_controls.assert_called_with(self.host.phone_owner, True)
+        self.assertTrue(self.host.phone_owner.source_controls)
+        await self.send('source.controls', session='stale', controls=False)
+        self.assertEqual((await self.receive())['type'], 'error')
+        self.assertTrue(self.host.phone_owner.source_controls)
+        await self.send('source.controls', session=session, controls=False)
+        await self.send('ping')
+        await self.receive()
+        self.assertFalse(self.host.phone_owner.source_controls)
+        await self.send('start', window='win32:7')
+        self.assertEqual((await self.receive())['type'], 'error')
+
     async def test_phone_source_rejects_oversized_surface(self):
         await self.pair(); self.host.phone_presenter = Mock()
         await self.send('source.start', width=1920, height=1920, codec='h264')

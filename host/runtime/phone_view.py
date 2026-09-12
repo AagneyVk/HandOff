@@ -53,6 +53,8 @@ class PhonePresenter:
         self.drag_start = None
         self.lock = threading.Lock()
         self.ui_queue = queue.Queue()
+        self.dirty = threading.Event()
+        self.control_label = None
         self.root.after(16, self._poll)
 
     def start(self, owner, width, height, audio, controls):
@@ -61,6 +63,7 @@ class PhonePresenter:
             if self.owner is not None: raise ValueError('A phone screen is already open.')
             self.owner, self.width, self.height = owner, width, height
             self.decoder = av.CodecContext.create('h264', 'r')
+            self.decoder.thread_count = 1
             self.audio = OutputAudio() if audio else None
             self.controls = controls
         self.ui_queue.put('open')
@@ -74,7 +77,9 @@ class PhonePresenter:
         frame = ttk.Frame(window); frame.pack(fill='both', expand=True)
         bar = ttk.Frame(frame, padding=8); bar.pack(fill='x')
         ttk.Label(bar, text='PHONE ON THIS COMPUTER', foreground='#006b58', font=('Segoe UI', 10, 'bold')).pack(side='left')
-        ttk.Label(bar, text='Control on' if self.controls else 'View only · enable Accessibility on phone').pack(side='left', padx=12)
+        self.control_label = ttk.Label(bar)
+        self.control_label.pack(side='left', padx=12)
+        self._control_status()
         ttk.Button(bar, text='Return to phone', command=lambda: self.send_control(self.owner, 'phone.stop')).pack(side='right')
         self.canvas = tk.Canvas(frame, bg='black', highlightthickness=0, takefocus=True)
         self.canvas.pack(fill='both', expand=True)
@@ -96,8 +101,17 @@ class PhonePresenter:
             frames = self.decoder.decode(av.Packet(data))
             if not frames: return False
             self.image = frames[-1].to_image().convert('RGB')
-        self.ui_queue.put('render')
+        self.dirty.set()
         return True
+
+    def set_controls(self, owner, enabled):
+        if owner is not self.owner: return
+        self.controls = enabled
+        self.ui_queue.put('controls')
+
+    def _control_status(self):
+        if self.control_label:
+            self.control_label.configure(text='Control on' if self.controls else 'View only · enable phone control in HandOff')
 
     def feed_audio(self, data):
         with self.lock:
@@ -164,9 +178,12 @@ class PhonePresenter:
             while True:
                 action = self.ui_queue.get_nowait()
                 if action == 'open': self._open()
-                elif action == 'render': self._render()
+                elif action == 'controls': self._control_status()
                 elif action == 'close': self._close_window()
         except queue.Empty: pass
+        if self.dirty.is_set():
+            self.dirty.clear()
+            self._render()
         try: self.root.after(16, self._poll)
         except tk.TclError: pass
 
@@ -174,4 +191,4 @@ class PhonePresenter:
         if self.window:
             try: self.window.destroy()
             except tk.TclError: pass
-        self.window = self.canvas = self.photo = None
+        self.window = self.canvas = self.photo = self.control_label = None

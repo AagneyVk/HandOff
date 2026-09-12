@@ -46,7 +46,7 @@ class PhoneProjectionService : Service() {
     private var audioRecord: AudioRecord? = null
     private var audioThread: Thread? = null
     private val running = AtomicBoolean(false)
-    private val wanted = AtomicBoolean(true)
+    private val frameWindow = PhoneFrameWindow()
     private var csd = ByteArray(0)
 
     override fun onBind(intent: Intent?) = null
@@ -83,7 +83,8 @@ class PhoneProjectionService : Service() {
         val format = MediaFormat.createVideoFormat("video/avc", width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, 3_000_000)
-            setInteger(MediaFormat.KEY_FRAME_RATE, 20)
+            setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+            setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             if (Build.VERSION.SDK_INT >= 29) setInteger(MediaFormat.KEY_PREPEND_HEADER_TO_SYNC_FRAMES, 1)
         }
@@ -103,7 +104,10 @@ class PhoneProjectionService : Service() {
     }
 
     fun requestFrame() {
-        wanted.set(true)
+        if (frameWindow.acknowledge()) requestKeyFrame()
+    }
+
+    private fun requestKeyFrame() {
         try { codec?.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0) }) }
         catch (_: Exception) { }
     }
@@ -122,12 +126,14 @@ class PhoneProjectionService : Service() {
                     csd = pieces.fold(ByteArray(0)) { all, item -> all + item }
                 } else if (index >= 0) {
                     val buffer = encoder.getOutputBuffer(index)
-                    if (buffer != null && info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0 && wanted.compareAndSet(true, false)) {
+                    val keyFrame = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
+                    if (buffer != null && info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0 && frameWindow.offer(keyFrame)) {
                         buffer.position(info.offset); buffer.limit(info.offset + info.size)
                         val frame = ByteArray(info.size).also { buffer.get(it) }
-                        PhoneSourceBus.sink?.video(if (hasParameterSets(frame)) frame else csd + frame)
+                        PhoneSourceBus.sink?.video(if (!keyFrame || hasParameterSets(frame)) frame else csd + frame)
                     }
                     encoder.releaseOutputBuffer(index, false)
+                    if (frameWindow.needsKeyFrame()) requestKeyFrame()
                 }
             }
         } catch (e: Exception) { if (running.get()) PhoneSourceBus.sink?.stopped(e.message ?: "Phone video stopped") }

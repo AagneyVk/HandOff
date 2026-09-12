@@ -14,11 +14,14 @@ class VideoDecoder(private val surface: Surface, val width: Int, val height: Int
             require(width <= 1920 && height <= 1080) { "Unsupported video dimensions" }
             val format = MediaFormat.createVideoFormat("video/avc", width, height)
             format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, Wire.MAX_PACKET)
-            if (Build.VERSION.SDK_INT >= 30) format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+            if (Build.VERSION.SDK_INT >= 30 && codec.codecInfo.getCapabilitiesForType("video/avc")
+                .isFeatureSupported(android.media.MediaCodecInfo.CodecCapabilities.FEATURE_LowLatency))
+                format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             codec.configure(format, surface, null, 0)
             codec.start()
         } catch (e: Exception) { codec.release(); throw e }
     }
+    fun isSurface(value: Surface?): Boolean = surface === value && surface.isValid
     fun render(bytes: ByteArray, sequence: Int) {
         require(surface.isValid) { "Video surface was closed" }
         val deadline = SystemClock.elapsedRealtime() + 2000
