@@ -232,7 +232,14 @@ jobs:
           VERSION=$(python -c 'from host.version import VERSION; print(VERSION)')
           TAG="v$VERSION"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo 'Version already published. Bump both app versions for a new update.' >> "$GITHUB_STEP_SUMMARY"
+            if [ -f release-files/HandOff.apk ]; then
+              EXISTING_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.sha')
+              test "$EXISTING_SHA" = "$GITHUB_SHA" || { echo 'Tag belongs to another revision; bump the version.'; exit 1; }
+              if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx 'HandOff.apk'; then
+                gh release upload "$TAG" release-files/HandOff.apk
+              fi
+            fi
+            echo 'Version already published; existing assets were preserved.' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           printf '%s\n' 'Tested release candidate. Windows installer is unsigned; Android APK is included only when permanent signing is configured. Pairing and settings are kept on compatible updates. See docs/UPDATES.md for the one-time debug APK migration.' > release-notes.txt

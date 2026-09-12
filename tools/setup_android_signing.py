@@ -18,6 +18,9 @@ key = folder / 'release.jks'
 settings = folder / 'credentials.json'
 if key.exists() != settings.exists(): raise SystemExit('Incomplete signing backup; recover it before proceeding.')
 if not key.exists():
+    configured = subprocess.run(['gh', 'secret', 'list', '--repo', repo, '--json', 'name'], check=True, capture_output=True, text=True)
+    if any(item['name'] == 'ANDROID_KEYSTORE_B64' for item in json.loads(configured.stdout)):
+        raise SystemExit('A release key is already configured in GitHub. Restore your original local key backup; do not replace it.')
     credentials = {'password': secrets.token_urlsafe(32), 'alias': 'handoff'}
     fd = os.open(settings, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'w') as file: json.dump(credentials, file)

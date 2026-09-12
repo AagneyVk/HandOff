@@ -16,7 +16,7 @@ python tools/setup_android_signing.py
 
 This generates a permanent private key only if none exists, keeps it under your home directory `.handoff-signing`, and uploads five signing secrets to this repository through GitHub CLI. Back up that directory securely. Never commit it, paste its contents into chat, or replace the signing key for routine updates. If you already configured an external release key, keep using that key and do not generate a replacement.
 
-Rerun the Framework tests workflow on main after configuring signing, or push the next version. CI runs release tests/lint, verifies the signing fingerprint, and publishes `HandOff.apk`. If that version's release already exists, CI deliberately does not overwrite it: bump both app version names plus Android versionCode for the next release.
+Rerun the Framework tests workflow on main after configuring signing, or push the next version. CI runs release tests/lint, verifies the signing fingerprint, and publishes `HandOff.apk`. If that exact revision's release already exists without an APK, rerunning adds the signed APK without replacing existing assets. Other changes require a version bump.
 
 The old CI debug APK used a different signing key. It cannot be updated in place using the permanent release key. Moving from that debug build requires one manual uninstall/install and pairing again. Once on the signed channel, subsequent updates retain settings and pairing. HandOff does not silently uninstall or delete user data.
 
