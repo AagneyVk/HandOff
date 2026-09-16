@@ -198,6 +198,27 @@ class SecureRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.host.text.assert_called_once_with('win32:7', 'Hello', (640, 480))
         self.host.key.assert_called_once_with('win32:7', 'enter', (640, 480))
 
+    async def test_control_accepts_the_visible_frame_while_next_frame_is_in_flight(self):
+        await self.pair()
+        session, visible_sequence = await self.start()
+        await self.send('ack', session=session, sequence=visible_sequence)
+        next_meta, _ = await self.receive(), await self.receive()
+        self.assertEqual(next_meta['sequence'], visible_sequence + 1)
+
+        # The user is still touching the acknowledged frame while the next one
+        # is being decoded. This is the normal 30 FPS path, not stale input.
+        await self.send('tap', session=session, sequence=visible_sequence, x=.4, y=.6)
+        await self.send('ping')
+        self.assertEqual((await self.receive())['type'], 'pong')
+        self.pointer.assert_called_once_with('win32:7', .4, .6, (640, 480))
+
+        await self.send('tap', session=session, sequence=visible_sequence - 9, x=.4, y=.6)
+        error = await self.receive()
+        self.assertEqual(error['type'], 'error')
+        self.assertIn('current frame', error['message'])
+        await self.send('stop', session=session)
+        self.assertEqual((await self.receive())['type'], 'stopped')
+
     async def test_rejects_unknown_stream_profile(self):
         await self.pair(); self.host.approve('win32:7')
         await self.send('start', window='win32:7', profile='unbounded')

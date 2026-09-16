@@ -1,18 +1,32 @@
 package dev.handoff.client
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
+import android.content.Context
 import android.graphics.Path
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 
 class RemoteControlService : AccessibilityService() {
     companion object {
         @Volatile private var current: RemoteControlService? = null
         fun enabled(): Boolean = current != null
+        fun installed(context: Context): Boolean = services(context, false).any { service ->
+            service.resolveInfo.serviceInfo.let { it.packageName == context.packageName && it.name == RemoteControlService::class.java.name }
+        }
+        fun enabledInSettings(context: Context): Boolean = services(context, true).any { service ->
+            service.resolveInfo.serviceInfo.let { it.packageName == context.packageName && it.name == RemoteControlService::class.java.name }
+        }
+        private fun services(context: Context, enabledOnly: Boolean) =
+            context.getSystemService(AccessibilityManager::class.java).let { manager ->
+                if (enabledOnly) manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                else manager.installedAccessibilityServiceList
+            }
         fun tap(x: Float, y: Float) = current?.gesture(x, y, x, y, 70L)
         fun drag(x0: Float, y0: Float, x1: Float, y1: Float) = current?.gesture(x0, y0, x1, y1, 320L)
         fun scroll(x: Float, y: Float, dy: Float) {

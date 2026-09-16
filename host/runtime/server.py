@@ -192,15 +192,7 @@ class Connection:
                 self.shown_sequence = self.sequence
                 self.ack.set()
         elif type_ in ('tap', 'scroll'):
-            self.validate_session(msg)
-            if type(msg.get('sequence')) is not int or msg['sequence'] != self.shown_sequence or msg['sequence'] != self.sequence or not self.shown_sequence:
-                raise ValueError('Wait for the current frame before controlling the app.')
-            now = time.monotonic()
-            if now - self.input_since > 1:
-                self.input_since, self.input_count = now, 0
-            self.input_count += 1
-            if self.input_count > 60:
-                raise ValueError('Too many input events.')
+            self.validate_control(msg)
             x, y = self.number(msg.get('x'), 0, 1), self.number(msg.get('y'), 0, 1)
             if type_ == 'tap':
                 self.host.pointer(self.selection[0], x, y, self.source_size)
@@ -289,7 +281,14 @@ class Connection:
 
     def validate_control(self, msg):
         self.validate_session(msg)
-        if type(msg.get('sequence')) is not int or msg['sequence'] != self.shown_sequence or msg['sequence'] != self.sequence or not self.shown_sequence:
+        # The phone can only act on the last frame its UI rendered. By the time a
+        # finger event crosses the network, the host will normally have sent the
+        # next frame already. Requiring equality with both counters therefore
+        # rejected legitimate input at normal frame rates. Keep input session-
+        # bound and accept only a small, recent displayed-frame window.
+        sequence = msg.get('sequence')
+        if (type(sequence) is not int or not self.shown_sequence or sequence <= 0
+                or sequence > self.sequence or self.sequence - sequence > 8):
             raise ValueError('Wait for the current frame before controlling the app.')
         now = time.monotonic()
         if now - self.input_since > 1: self.input_since, self.input_count = now, 0

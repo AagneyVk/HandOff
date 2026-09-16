@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
@@ -36,6 +37,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
@@ -81,7 +85,10 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
     var phoneAudio by remember { mutableStateOf(false) }
     var projectionPending by remember { mutableStateOf(false) }
     var controlEnabled by remember { mutableStateOf(RemoteControlService.enabled()) }
+    var controlInstalled by remember { mutableStateOf(RemoteControlService.installed(context)) }
+    var controlEnabledInSettings by remember { mutableStateOf(RemoteControlService.enabledInSettings(context)) }
     var showControlHelp by remember { mutableStateOf(false) }
+    var showKeyboardControls by remember { mutableStateOf(false) }
     val client = remember {
         ProtocolClient(store, onState = { value ->
             status = value
@@ -124,6 +131,8 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
     LaunchedEffect(client) {
         while (true) {
             controlEnabled = RemoteControlService.enabled()
+            controlInstalled = RemoteControlService.installed(context)
+            controlEnabledInSettings = RemoteControlService.enabledInSettings(context)
             client.refreshPhoneControls()
             kotlinx.coroutines.delay(500)
         }
@@ -132,9 +141,20 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
         bindBackground { client.close(); connected = false; live = false; busy = false; bitmap = null; windows = emptyList(); status = "Paused · Reconnect to continue" }
         onDispose { bindBackground(null); client.dispose() }
     }
-    DisposableEffect(live) {
-        if (live) activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        onDispose { activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    DisposableEffect(live, videoSize) {
+        val insets = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        if (live) {
+            activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            activity.requestedOrientation = if (videoSize.first >= videoSize.second)
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            insets.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            insets.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {
+            activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            insets.show(WindowInsetsCompat.Type.systemBars())
+        }
     }
     fun pair(raw: String) {
         try { val link = Pairing.parse(raw); pairingText = ""; client.pair(link) }
@@ -168,6 +188,19 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
         val manager = context.getSystemService(MediaProjectionManager::class.java)
         projectionLauncher.launch(manager.createScreenCaptureIntent())
     }
+    fun openControlSettings() {
+        try {
+            activity.keepSettingsConnection()
+            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        } catch (_: Exception) { status = "This device could not open Accessibility settings" }
+    }
+    fun openAppInfo() {
+        try {
+            activity.keepSettingsConnection()
+            context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.parse("package:${context.packageName}")))
+        } catch (_: Exception) { status = "This device could not open HandOff app info" }
+    }
     val audioPermission = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) requestProjection()
         else { projectionPending = false; activity.keepProjectionConnection(false); status = "Audio permission denied; turn phone audio off to share video only" }
@@ -181,49 +214,46 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
             onDismissRequest = { showControlHelp = false },
             title = { Text("Allow laptop control") },
             text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Screen sharing lets your laptop see the phone. Android Accessibility separately allows clicks, swipes and typing during your paired HandOff session.")
-                Text("Open Accessibility → Installed apps / Downloaded apps → HandOff phone control → Use service. Return here afterwards; the status will update automatically.")
-                Text("If Android says Restricted setting: open App info → ⋮ → Allow restricted settings, then return to Accessibility. Only enable this for a HandOff APK you trust.")
+                Text("This setting is not listed under Permissions. Android puts remote touch under Accessibility special access.", fontWeight = FontWeight.SemiBold)
+                Text("1. Open App info. On Android 13 or newer, tap ⋮ and Allow restricted settings. Some phones do not require this step.")
+                Text("2. Open Accessibility → Installed apps / Downloaded apps → HandOff phone control → Use service.")
+                Text(if (controlInstalled) "HandOff phone control is installed ✓" else "Android has not discovered the HandOff control service. Install the newest APK and restart the phone.")
+                Text(if (controlEnabledInSettings) "Accessibility switch is on ✓" else "Accessibility switch is still off")
                 Text("For accurate control, choose Entire screen in Android’s sharing prompt. You can stop sharing at any time.")
             } },
             confirmButton = { TextButton(onClick = {
                 showControlHelp = false
-                activity.keepSettingsConnection()
-                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                context.startActivity(intent)
+                openControlSettings()
             }) { Text("Open Accessibility") } },
-            dismissButton = { TextButton(onClick = {
-                activity.keepSettingsConnection()
-                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    android.net.Uri.parse("package:${context.packageName}")))
-            }) { Text("App info") } }
+            dismissButton = { TextButton(onClick = { openAppInfo() }) { Text("App info first") } }
         )
         Scaffold { padding ->
             if (live) {
-                Column(Modifier.fillMaxSize().padding(padding).background(Color.Black)) {
-                    Surface {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(title, Modifier.weight(1f), maxLines = 1, fontWeight = FontWeight.SemiBold)
-                                TextButton(onClick = { client.stop() }) { Text("Return") }
-                            }
-                            Text(status, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxSize().padding(padding).background(Color.Black), contentAlignment = Alignment.Center) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         if (videoCodec == "h264") LiveVideo(videoSize, sequence, client, dragMode)
                         else bitmap?.let { frame -> LiveImage(frame, sequence, client, dragMode) } ?: CircularProgressIndicator()
                     }
-                    Surface(color = MaterialTheme.colorScheme.surface) {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                FilterChip(selected = !dragMode, onClick = { dragMode = false }, label = { Text("Scroll") })
-                                Spacer(Modifier.width(8.dp))
-                                FilterChip(selected = dragMode, onClick = { dragMode = true }, label = { Text("Drag") })
-                                Spacer(Modifier.weight(1f))
-                                Text(if (dragMode) "Swipe drags on the computer" else "Swipe scrolls", style = MaterialTheme.typography.labelSmall)
+                    Surface(Modifier.align(Alignment.TopCenter).fillMaxWidth(), color = MaterialTheme.colorScheme.surface.copy(alpha = .90f)) {
+                        Row(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(title, maxLines = 1, fontWeight = FontWeight.SemiBold)
+                                Text(status, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                             }
-                            if (keyboardSupported) {
+                            TextButton(onClick = { client.stop() }) { Text("Return") }
+                        }
+                    }
+                    Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth(), color = MaterialTheme.colorScheme.surface.copy(alpha = .90f)) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(selected = !dragMode, onClick = { dragMode = false }, label = { Text("Scroll") })
+                                FilterChip(selected = dragMode, onClick = { dragMode = true }, label = { Text("Drag") })
+                                if (keyboardSupported) FilterChip(selected = showKeyboardControls,
+                                    onClick = { showKeyboardControls = !showKeyboardControls }, label = { Text("Keyboard") })
+                                Spacer(Modifier.weight(1f))
+                                Text(if (dragMode) "Swipe = drag" else "Tap = click · swipe = scroll", style = MaterialTheme.typography.labelSmall)
+                            }
+                            if (keyboardSupported && showKeyboardControls) {
                                 OutlinedTextField(textEntry, { textEntry = it.take(256) }, modifier = Modifier.fillMaxWidth(),
                                     placeholder = { Text("Type on computer") }, singleLine = true,
                                     trailingIcon = { TextButton(onClick = { if (textEntry.isNotEmpty()) { client.text(textEntry, sequence); textEntry = "" } }) { Text("Send") } })
@@ -287,8 +317,19 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                                         Text("Share phone media audio")
                                     }
                                     if (phoneAudio) Text("Android calls this permission ‘Record audio’. HandOff captures allowed app playback, not the microphone.", style = MaterialTheme.typography.bodySmall)
-                                    Text(if (controlEnabled) "Laptop control is ready" else "View only · laptop control needs Accessibility", style = MaterialTheme.typography.bodySmall)
-                                    TextButton(onClick = { showControlHelp = true }) { Text(if (controlEnabled) "Control settings" else "Set up laptop control") }
+                                    Text(if (controlEnabled) "Laptop control is ready ✓" else "View only · remote touch is not enabled",
+                                        style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                                    if (!controlEnabled) {
+                                        Text("Remote touch is Accessibility special access—not an item under App permissions.",
+                                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedButton(onClick = { openAppInfo() }) { Text("1 App info") }
+                                            Button(onClick = { openControlSettings() }) { Text("2 Accessibility") }
+                                        }
+                                        TextButton(onClick = { showControlHelp = true }) { Text("Show exact setup steps") }
+                                    } else {
+                                        TextButton(onClick = { showControlHelp = true }) { Text("Control settings") }
+                                    }
                                     if (phoneSharing) Button(onClick = { PhoneProjectionService.stop(context) }, modifier = Modifier.fillMaxWidth()) { Text("Return to phone") }
                                     else Button(onClick = {
                                         if (phoneAudio && androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
