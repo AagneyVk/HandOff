@@ -14,3 +14,4 @@ V0 responsibilities:
 - collect latency/drop telemetry
 
 The client must not assume the source is Windows or Linux; behavior is driven by host capability negotiation.
+

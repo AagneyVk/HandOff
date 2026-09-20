@@ -37,3 +37,4 @@ The next media milestone replaces this synthetic mode with an encoded desktop fr
 ## Security note
 
 This development host has no pairing/authentication yet. It is for a trusted development LAN only. Do not expose TCP 47820 to the internet or an untrusted network.
+
