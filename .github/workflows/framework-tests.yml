@@ -248,3 +248,54 @@ jobs:
           fi
           printf '%s\n' 'Tested release candidate. Windows installer is unsigned; Android APK is included only when permanent signing is configured. Pairing and settings are kept on compatible updates. See docs/UPDATES.md for the one-time debug APK migration.' > release-notes.txt
           gh release create "$TAG" release-files/* --target "$GITHUB_SHA" --title "HandOff $VERSION" --prerelease --notes-file release-notes.txt
+      - name: Publish rate-limit-resistant update channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(python -c 'from host.version import VERSION; print(VERSION)')
+          TAG="v$VERSION"
+          export TAG
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          repository = os.environ['GITHUB_REPOSITORY']
+          tag = os.environ['TAG']
+          assets = {}
+          for platform, name in [('windows', 'HandOff-Setup.exe'), ('android', 'HandOff.apk')]:
+              path = Path('release-files', name)
+              if not path.is_file():
+                  continue
+              assets[platform] = {
+                  'name': name,
+                  'url': f'https://github.com/{repository}/releases/download/{tag}/{name}',
+                  'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                  'size': path.stat().st_size,
+              }
+          if 'windows' not in assets:
+              raise SystemExit('Windows update asset is missing')
+          Path('update.json').write_text(json.dumps({
+              'schema': 1,
+              'tag': tag,
+              'published_revision': os.environ['GITHUB_SHA'],
+              'assets': assets,
+          }, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          PY
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/update-channel" >/dev/null 2>&1; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref='refs/heads/update-channel' -f sha="$GITHUB_SHA"
+          fi
+          CHANNEL_SHA=$(gh api "repos/$GITHUB_REPOSITORY/contents/update.json?ref=update-channel" --jq '.sha' 2>/dev/null || true)
+          CONTENT=$(base64 -w 0 update.json)
+          if [ -n "$CHANNEL_SHA" ]; then
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/update.json" \
+              -f message="Publish $TAG update channel" -f content="$CONTENT" \
+              -f branch='update-channel' -f sha="$CHANNEL_SHA" >/dev/null
+          else
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/update.json" \
+              -f message="Publish $TAG update channel" -f content="$CONTENT" \
+              -f branch='update-channel' >/dev/null
+          fi
+          echo "Published $TAG metadata without using the GitHub Releases API at runtime." >> "$GITHUB_STEP_SUMMARY"

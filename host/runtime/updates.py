@@ -10,8 +10,10 @@ import urllib.request
 
 from host.version import VERSION
 API = 'https://api.github.com/repos/AagneyVk/HandOff/releases?per_page=30'
+CHANNEL = 'https://raw.githubusercontent.com/AagneyVk/HandOff/update-channel/update.json'
 PREFIX = 'https://github.com/AagneyVk/HandOff/releases/download/'
 MAX_SIZE = 400 * 1024 * 1024
+METADATA_LIMIT = 1024 * 1024
 
 
 def version(value):
@@ -50,11 +52,45 @@ def select_release(releases, current=VERSION):
     return max(candidates, key=lambda r: version(r['tag'])) if candidates else None
 
 
+def select_channel(manifest, current=VERSION):
+    if not isinstance(manifest, dict) or manifest.get('schema') != 1:
+        raise ValueError('Unsupported update channel metadata')
+    tag = manifest.get('tag')
+    try: newer = version(tag) > version(current)
+    except (ValueError, TypeError): raise ValueError('Invalid update channel version') from None
+    asset = manifest.get('assets', {}).get('windows')
+    if not isinstance(asset, dict):
+        raise ValueError('Windows update is missing from the update channel')
+    digest = asset.get('sha256', '')
+    url = asset.get('url', '')
+    size = asset.get('size', 0)
+    if (asset.get('name') != 'HandOff-Setup.exe'
+            or not re.fullmatch(r'[0-9a-f]{64}', digest or '')
+            or not isinstance(url, str) or not url.startswith(PREFIX)
+            or type(size) is not int or not 0 < size <= MAX_SIZE):
+        raise ValueError('Invalid Windows update channel metadata')
+    return dict(tag=tag, url=url, digest=digest, size=size) if newer else None
+
+
+def read_json(url):
+    with open_url(url) as response:
+        data = response.read(METADATA_LIMIT + 1)
+    if len(data) > METADATA_LIMIT: raise ValueError('Release metadata too large')
+    return json.loads(data)
+
+
 def check():
-    with open_url(API) as response:
-        data = response.read(1024 * 1024 + 1)
-    if len(data) > 1024 * 1024: raise ValueError('Release metadata too large')
-    return select_release(json.loads(data))
+    """Use the CDN-backed channel first; REST API is only a compatibility fallback."""
+    try:
+        return select_channel(read_json(CHANNEL))
+    except Exception as channel_error:
+        try:
+            return select_release(read_json(API))
+        except Exception as api_error:
+            raise RuntimeError(
+                'Update services are temporarily unavailable. '
+                f'Channel: {channel_error}; fallback: {api_error}'
+            ) from api_error
 
 
 def download(release, directory):

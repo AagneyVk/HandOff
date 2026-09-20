@@ -1,5 +1,7 @@
 # Install once, update from HandOff
 
+Update discovery normally uses the CDN-cached `update-channel/update.json` manifest. This avoids GitHub's low unauthenticated REST API quota on campus, office, carrier-NAT, and other shared networks. The GitHub Releases API remains a fallback. The release workflow publishes the manifest only after the tested Windows installer and permanently signed Android APK have been produced.
+
 Windows: download `HandOff-Setup.exe` from GitHub Releases, run it, and use the Start menu shortcut. No ZIP extraction or Python installation is required. The per-user installer does not require administrator access. It keeps pairing data in `%LOCALAPPDATA%/HandOff`, separately from program files. Existing portable users can close their old copy and run Setup; pairing stays in the same location.
 
 Inside HandOff, choose Check for updates → Download update → Install update. The download is size-bounded and checked against the GitHub release asset SHA-256 digest. Installation closes HandOff after confirmation; finish Setup with Open HandOff selected. A failed download can be retried and never launches an installer. Windows publisher signing is not yet configured for this installer; it is not advertised as signed.

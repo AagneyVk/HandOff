@@ -20,6 +20,25 @@ class UpdateTests(unittest.TestCase):
         self.assertIsNone(updates.select_release([dict(tag_name='v9.0.0', assets=[dict(self.asset(), browser_download_url='https://example.com/evil.exe')])]))
         self.assertIsNone(updates.select_release([dict(tag_name='v9.0.0', draft=True, assets=[self.asset()])]))
 
+    def test_rate_limit_resistant_update_channel(self):
+        asset = self.asset()
+        manifest = dict(schema=1, tag='v1.0.0-rc10', assets=dict(windows=dict(
+            name=asset['name'], size=asset['size'], sha256=asset['digest'][7:], url=asset['browser_download_url']
+        )))
+        self.assertEqual(updates.select_channel(manifest, '1.0.0-rc9')['tag'], 'v1.0.0-rc10')
+        self.assertIsNone(updates.select_channel(manifest, '1.0.0-rc10'))
+        with self.assertRaises(ValueError):
+            updates.select_channel(dict(manifest, schema=2), '1.0.0-rc9')
+        manifest['assets']['windows']['url'] = 'https://example.com/HandOff-Setup.exe'
+        with self.assertRaises(ValueError):
+            updates.select_channel(manifest, '1.0.0-rc9')
+
+    def test_check_falls_back_to_api_when_channel_is_unavailable(self):
+        releases = [dict(tag_name='v9.0.0', assets=[self.asset()])]
+        with patch.object(updates, 'read_json', side_effect=[OSError('CDN unavailable'), releases]) as read:
+            self.assertEqual(updates.check()['tag'], 'v9.0.0')
+        self.assertEqual([call.args[0] for call in read.call_args_list], [updates.CHANNEL, updates.API])
+
     def test_download_checks_hash_and_cleans_partial(self):
         data = b'installer'
         release = updates.select_release([dict(tag_name='v9.0.0', assets=[self.asset(data)])])

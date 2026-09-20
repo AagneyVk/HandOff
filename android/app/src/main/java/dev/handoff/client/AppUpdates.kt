@@ -22,10 +22,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 
 object AppUpdates {
     data class Release(val tag: String, val url: String, val digest: String, val size: Long)
     private const val API = "https://api.github.com/repos/AagneyVk/HandOff/releases?per_page=30"
+    private const val CHANNEL = "https://raw.githubusercontent.com/AagneyVk/HandOff/update-channel/update.json"
     private const val PREFIX = "https://github.com/AagneyVk/HandOff/releases/download/"
     private const val LIMIT = 150L * 1024 * 1024
 
@@ -81,7 +83,7 @@ object AppUpdates {
         else -> IllegalStateException(e.message ?: "Update connection failed", e)
     }
 
-    fun check(): Release? {
+    private fun checkApi(): Release? {
         val conn = connection(API)
         val json = try { conn.inputStream.use { stream ->
             val data = stream.readBytesBounded(1024 * 1024)
@@ -102,6 +104,41 @@ object AppUpdates {
             }
         }
         return best
+    }
+
+    private fun checkChannel(): Release? {
+        val conn = connection(CHANNEL)
+        val json = try { conn.inputStream.use { stream ->
+            JSONObject(String(stream.readBytesBounded(1024 * 1024), Charsets.UTF_8))
+        } } catch (e: Exception) {
+            throw if (e is IllegalArgumentException || e is org.json.JSONException) IllegalStateException("GitHub returned invalid update-channel metadata", e) else friendlyNetworkError(e)
+        } finally { conn.disconnect() }
+        require(json.optInt("schema") == 1) { "Unsupported update-channel metadata" }
+        val tag = json.optString("tag")
+        require(version(tag) != null) { "Invalid update-channel version" }
+        val asset = json.optJSONObject("assets")?.optJSONObject("android")
+            ?: error("Android update is missing from the update channel")
+        val digest = asset.optString("sha256")
+        val url = asset.optString("url")
+        val size = asset.optLong("size")
+        require(asset.optString("name") == "HandOff.apk" && Regex("[0-9a-f]{64}").matches(digest)
+                && url.startsWith(PREFIX) && size in 1..LIMIT) { "Invalid Android update-channel metadata" }
+        return if (newer(tag, BuildConfig.VERSION_NAME)) Release(tag, url, digest, size) else null
+    }
+
+    fun check(): Release? {
+        return try {
+            checkChannel()
+        } catch (channelError: Exception) {
+            try {
+                checkApi()
+            } catch (apiError: Exception) {
+                throw IllegalStateException(
+                    "Update services are temporarily unavailable. Channel: ${channelError.message}; fallback: ${apiError.message}",
+                    apiError
+                )
+            }
+        }
     }
 
     private fun java.io.InputStream.readBytesBounded(limit: Int): ByteArray {
