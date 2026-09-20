@@ -55,6 +55,7 @@ class PhonePresenter:
         self.ui_queue = queue.Queue()
         self.dirty = threading.Event()
         self.control_label = None
+        self.control_result_label = None
         self.root.after(16, self._poll)
 
     def start(self, owner, width, height, audio, controls):
@@ -72,8 +73,8 @@ class PhonePresenter:
         if self.owner is None: return
         window = tk.Toplevel(self.root); self.window = window
         window.title('HandOff · Phone')
-        window.geometry('520x820')
-        window.minsize(320, 480)
+        self._fit_window(window)
+        window.minsize(300, 260)
         frame = ttk.Frame(window); frame.pack(fill='both', expand=True)
         bar = ttk.Frame(frame, padding=8); bar.pack(fill='x')
         ttk.Label(bar, text='PHONE ON THIS COMPUTER', foreground='#006b58', font=('Segoe UI', 10, 'bold')).pack(side='left')
@@ -81,6 +82,7 @@ class PhonePresenter:
         self.control_label.pack(side='left', padx=12)
         self._control_status()
         ttk.Button(bar, text='Return to phone', command=lambda: self.send_control(self.owner, 'phone.stop')).pack(side='right')
+        ttk.Button(bar, text='Maximize', command=self._toggle_maximize).pack(side='right', padx=6)
         self.canvas = tk.Canvas(frame, bg='black', highlightthickness=0, takefocus=True)
         self.canvas.pack(fill='both', expand=True)
         self.canvas.bind('<Configure>', lambda _event: self._render())
@@ -91,6 +93,7 @@ class PhonePresenter:
         self.canvas.bind('<Button-5>', lambda event: self._wheel(event, -1))
         self.canvas.bind('<KeyPress>', self._key)
         window.protocol('WM_DELETE_WINDOW', lambda: self.send_control(self.owner, 'phone.stop'))
+        window.bind('<F11>', lambda _event: self._toggle_maximize())
         self.canvas.focus_set()
         self._render()
 
@@ -112,6 +115,32 @@ class PhonePresenter:
     def _control_status(self):
         if self.control_label:
             self.control_label.configure(text='Control on' if self.controls else 'View only · enable phone control in HandOff')
+
+    def control_result(self, owner, action, success, message):
+        if owner is not self.owner: return
+        self.ui_queue.put(('result', action, success, message))
+
+    def _show_control_result(self, action, success, message):
+        if self.control_label:
+            detail = f'{action.title()} delivered' if success else message
+            self.control_label.configure(text=f'Control on · {detail}' if self.controls else detail)
+
+    def _fit_window(self, window):
+        available_width = max(320, round(window.winfo_screenwidth() * .72))
+        available_height = max(360, round(window.winfo_screenheight() * .82))
+        ratio = self.width / max(1, self.height)
+        content_height = min(available_height - 54, available_width / max(.1, ratio))
+        content_width = min(available_width, content_height * ratio)
+        window.geometry(f'{max(300, round(content_width))}x{max(260, round(content_height + 54))}')
+
+    def _toggle_maximize(self):
+        if not self.window: return
+        try:
+            if self.window.state() == 'zoomed': self.window.state('normal'); self._fit_window(self.window)
+            else: self.window.state('zoomed')
+        except tk.TclError:
+            try: self.window.attributes('-zoomed', not bool(self.window.attributes('-zoomed')))
+            except tk.TclError: self._fit_window(self.window)
 
     def feed_audio(self, data):
         with self.lock:
@@ -180,6 +209,7 @@ class PhonePresenter:
                 if action == 'open': self._open()
                 elif action == 'controls': self._control_status()
                 elif action == 'close': self._close_window()
+                elif isinstance(action, tuple) and action[0] == 'result': self._show_control_result(*action[1:])
         except queue.Empty: pass
         if self.dirty.is_set():
             self.dirty.clear()

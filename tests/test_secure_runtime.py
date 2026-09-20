@@ -204,14 +204,10 @@ class SecureRuntimeTests(unittest.IsolatedAsyncioTestCase):
         await self.send('ack', session=session, sequence=visible_sequence)
         next_meta, _ = await self.receive(), await self.receive()
         self.assertEqual(next_meta['sequence'], visible_sequence + 1)
-
-        # The user is still touching the acknowledged frame while the next one
-        # is being decoded. This is the normal 30 FPS path, not stale input.
         await self.send('tap', session=session, sequence=visible_sequence, x=.4, y=.6)
         await self.send('ping')
         self.assertEqual((await self.receive())['type'], 'pong')
         self.pointer.assert_called_once_with('win32:7', .4, .6, (640, 480))
-
         await self.send('tap', session=session, sequence=visible_sequence - 9, x=.4, y=.6)
         error = await self.receive()
         self.assertEqual(error['type'], 'error')
@@ -265,6 +261,11 @@ class SecureRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.receive())['type'], 'pong')
         self.host.phone_presenter.set_controls.assert_called_with(self.host.phone_owner, True)
         self.assertTrue(self.host.phone_owner.source_controls)
+        await self.send('source.controlResult', session=session, action='tap', success=True, message='Delivered to phone')
+        await self.send('ping')
+        self.assertEqual((await self.receive())['type'], 'pong')
+        self.host.phone_presenter.control_result.assert_called_with(
+            self.host.phone_owner, 'tap', True, 'Delivered to phone')
         await self.send('source.controls', session='stale', controls=False)
         self.assertEqual((await self.receive())['type'], 'error')
         self.assertTrue(self.host.phone_owner.source_controls)

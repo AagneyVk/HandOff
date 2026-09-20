@@ -146,14 +146,26 @@ class ProtocolClient(
                         }
                         "phone.stop" -> { requirePhoneSession(msg); sourceContext?.let { PhoneProjectionService.stop(it) }; continue }
                         "phone.tap" -> {
-                            requirePhoneSession(msg); RemoteControlService.tap(msg.getDouble("x").toFloat(), msg.getDouble("y").toFloat()); continue
+                            requirePhoneSession(msg)
+                            RemoteControlService.tap(msg.getDouble("x").toFloat(), msg.getDouble("y").toFloat()) { success, message ->
+                                phoneControlResult("tap", success, message)
+                            }
+                            continue
                         }
                         "phone.drag" -> {
-                            requirePhoneSession(msg); RemoteControlService.drag(msg.getDouble("x0").toFloat(), msg.getDouble("y0").toFloat(),
-                                msg.getDouble("x1").toFloat(), msg.getDouble("y1").toFloat()); continue
+                            requirePhoneSession(msg)
+                            RemoteControlService.drag(msg.getDouble("x0").toFloat(), msg.getDouble("y0").toFloat(),
+                                msg.getDouble("x1").toFloat(), msg.getDouble("y1").toFloat()) { success, message ->
+                                phoneControlResult("drag", success, message)
+                            }
+                            continue
                         }
                         "phone.scroll" -> {
-                            requirePhoneSession(msg); RemoteControlService.scroll(msg.getDouble("x").toFloat(), msg.getDouble("y").toFloat(), msg.getDouble("dy").toFloat()); continue
+                            requirePhoneSession(msg)
+                            RemoteControlService.scroll(msg.getDouble("x").toFloat(), msg.getDouble("y").toFloat(), msg.getDouble("dy").toFloat()) { success, message ->
+                                phoneControlResult("scroll", success, message)
+                            }
+                            continue
                         }
                         "phone.text" -> {
                             requirePhoneSession(msg); msg.getString("text").takeIf { it.length <= 256 }?.let { RemoteControlService.text(it) }; continue
@@ -258,6 +270,12 @@ class ProtocolClient(
 
     private fun requirePhoneSession(msg: JSONObject) {
         require(sourceSession != null && msg.getString("session") == sourceSession) { "Stale phone control session" }
+    }
+
+    private fun phoneControlResult(action: String, success: Boolean, message: String) {
+        val active = sourceSession ?: return
+        send("source.controlResult", JSONObject().put("session", active).put("action", action)
+            .put("success", success).put("message", message.take(160)))
     }
 
     fun beginPhoneShare(context: Context, resultCode: Int, data: Intent, width: Int, height: Int, audio: Boolean) {

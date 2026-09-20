@@ -242,6 +242,14 @@ class Connection:
             if type(msg.get('controls')) is not bool: raise ValueError('Invalid control availability.')
             self.source_controls = msg['controls']
             self.host.phone_presenter.set_controls(self, self.source_controls)
+        elif type_ == 'source.controlResult':
+            self.validate_source(msg)
+            action, success, message = msg.get('action'), msg.get('success'), msg.get('message')
+            if action not in ('tap', 'drag', 'scroll') or type(success) is not bool:
+                raise ValueError('Invalid phone control result.')
+            if not isinstance(message, str) or len(message) > 160:
+                raise ValueError('Invalid phone control message.')
+            self.host.phone_presenter.control_result(self, action, success, message)
         elif type_ == 'source.frame':
             self.validate_source(msg)
             sequence = msg.get('sequence')
@@ -281,11 +289,6 @@ class Connection:
 
     def validate_control(self, msg):
         self.validate_session(msg)
-        # The phone can only act on the last frame its UI rendered. By the time a
-        # finger event crosses the network, the host will normally have sent the
-        # next frame already. Requiring equality with both counters therefore
-        # rejected legitimate input at normal frame rates. Keep input session-
-        # bound and accept only a small, recent displayed-frame window.
         sequence = msg.get('sequence')
         if (type(sequence) is not int or not self.shown_sequence or sequence <= 0
                 or sequence > self.sequence or self.sequence - sequence > 8):
