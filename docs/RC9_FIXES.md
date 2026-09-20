@@ -7,4 +7,4 @@
 - The Android control setup screen distinguishes an enabled switch from a running service and provides manufacturer-aware setup and battery/background guidance.
 - The desktop phone viewer starts at the source aspect ratio, remains freely resizable and has a Maximize/F11 control.
 - The phone's desktop viewer no longer places keyboard/scroll/drag panels over the streamed content. A dedicated collapsible side rail owns its own space, and keyboard controls open only on request.
-- Android instrumentation now enables the real accessibility service and verifies a platform gesture completes.
+- Android instrumentation verifies the service is discoverable, declares gesture capability and reports a clear failure when the user-only Accessibility switch is not active.

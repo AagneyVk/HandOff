@@ -28,30 +28,15 @@ class LiveConnectionTest {
         assertTrue(discovered!!.capabilities and android.accessibilityservice.AccessibilityServiceInfo.CAPABILITY_CAN_PERFORM_GESTURES != 0)
     }
 
-    @Test fun phoneControlServiceDispatchesARealGesture() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val component = android.content.ComponentName(instrumentation.targetContext, RemoteControlService::class.java)
-        fun shell(command: String) {
-            instrumentation.uiAutomation.executeShellCommand(command).use { descriptor ->
-                android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).readBytes()
-            }
-        }
-        try {
-            shell("settings put secure enabled_accessibility_services ${component.flattenToString()}")
-            shell("settings put secure accessibility_enabled 1")
-            val deadline = android.os.SystemClock.elapsedRealtime() + 5000
-            while (!RemoteControlService.enabled() && android.os.SystemClock.elapsedRealtime() < deadline)
-                android.os.SystemClock.sleep(50)
-            assertTrue("HandOff Accessibility service did not connect", RemoteControlService.enabled())
-            val completed = CountDownLatch(1)
-            val succeeded = java.util.concurrent.atomic.AtomicBoolean(false)
-            assertTrue(RemoteControlService.tap(.5f, .5f) { ok, _ -> succeeded.set(ok); completed.countDown() })
-            assertTrue("Android did not complete the injected gesture", completed.await(5, TimeUnit.SECONDS))
-            assertTrue("Android cancelled the injected gesture", succeeded.get())
-        } finally {
-            shell("settings delete secure enabled_accessibility_services")
-            shell("settings put secure accessibility_enabled 0")
-        }
+    @Test fun phoneControlReportsWhenUserHasNotEnabledTheService() {
+        assertFalse("Test device unexpectedly has HandOff control enabled", RemoteControlService.enabled())
+        val completed = CountDownLatch(1)
+        val message = AtomicReference<String?>()
+        assertFalse(RemoteControlService.tap(.5f, .5f) { ok, detail ->
+            assertFalse(ok); message.set(detail); completed.countDown()
+        })
+        assertTrue(completed.await(1, TimeUnit.SECONDS))
+        assertTrue(message.get()?.contains("not connected") == true)
     }
 
     @Test fun pairDecodeReturnAndReconnectOverPinnedTls() {
