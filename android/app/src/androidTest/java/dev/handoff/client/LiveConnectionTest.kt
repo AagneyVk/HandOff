@@ -16,16 +16,22 @@ class LiveConnectionTest {
     @Test fun accessibilityServiceInjectsARealTouch() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         fun shell(command: String) = instrumentation.uiAutomation.executeShellCommand(command).use {
-            android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes()
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes().toString(Charsets.UTF_8)
         }
         val component = "${instrumentation.targetContext.packageName}/${RemoteControlService::class.java.name}"
         ControlTargetActivity.touch = CountDownLatch(1)
         try {
+            // Android 13+ classifies sideloaded accessibility services as restricted settings.
+            // The emulator is installed through adb, so explicitly grant the same gate a user
+            // grants through App info -> Allow restricted settings before enabling the service.
+            shell("appops set ${instrumentation.targetContext.packageName} ACCESS_RESTRICTED_SETTINGS allow")
             shell("settings put secure enabled_accessibility_services $component")
             shell("settings put secure accessibility_enabled 1")
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8)
             while (!RemoteControlService.enabled() && System.nanoTime() < deadline) Thread.sleep(50)
-            assertTrue("HandOff Accessibility service did not connect", RemoteControlService.enabled())
+            val enabled = shell("settings get secure enabled_accessibility_services").trim()
+            val state = shell("dumpsys accessibility")
+            assertTrue("HandOff Accessibility service did not connect; setting=$enabled\n$state", RemoteControlService.enabled())
             instrumentation.targetContext.startActivity(
                 android.content.Intent(instrumentation.targetContext, ControlTargetActivity::class.java)
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
