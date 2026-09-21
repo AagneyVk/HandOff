@@ -2,18 +2,18 @@
   "assets": {
     "android": {
       "name": "HandOff.apk",
-      "sha256": "45ba04972aeea3b9cfbbf297cb4c200588de341413e5763fe7571bc95376ba65",
+      "sha256": "f4945def42bace86cb9bbafa521afc1e7824b0f7d02b66c86ad11220d8bd8144",
       "size": 6843039,
-      "url": "https://github.com/AagneyVk/HandOff/releases/download/v1.0.0-rc11/HandOff.apk"
+      "url": "https://github.com/AagneyVk/HandOff/releases/download/v1.0.0-rc12/HandOff.apk"
     },
     "windows": {
       "name": "HandOff-Setup.exe",
-      "sha256": "32efc6f61515df0e4ae2b92cd084ef01171efad5fc51ececea04a1952ca23472",
-      "size": 49279646,
-      "url": "https://github.com/AagneyVk/HandOff/releases/download/v1.0.0-rc11/HandOff-Setup.exe"
+      "sha256": "17473e1b422fdf1115f7375fc73b70328e50baac582f1f4a96561629b201be59",
+      "size": 49281035,
+      "url": "https://github.com/AagneyVk/HandOff/releases/download/v1.0.0-rc12/HandOff-Setup.exe"
     }
   },
-  "published_revision": "87f137cac52ce07d086c05149314d640ce5e6bb0",
+  "published_revision": "ed222e748ea744c46fecb0b0493e70d8ad431c8c",
   "schema": 1,
-  "tag": "v1.0.0-rc11"
+  "tag": "v1.0.0-rc12"
 }
