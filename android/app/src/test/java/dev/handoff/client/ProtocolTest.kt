@@ -55,4 +55,10 @@ class ProtocolTest {
         assertNull(contentPoint(Float.NaN, 0f, 200f, 400f, 200, 100))
         assertNull(contentPoint(0f, 0f, 0f, 400f, 200, 100))
     }
+    @Test fun desktopWheelMapsToPhysicalSwipeDirection() {
+        assertTrue(scrollGestureEnd(.5f, -1f) < .5f)
+        assertTrue(scrollGestureEnd(.5f, 1f) > .5f)
+        assertEquals(.08f, scrollGestureEnd(.1f, -1f), .0001f)
+        assertEquals(.92f, scrollGestureEnd(.9f, 1f), .0001f)
+    }
 }

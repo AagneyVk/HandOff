@@ -303,6 +303,7 @@ class ProtocolClient(
 
     private fun phoneControlResult(action: String, success: Boolean, message: String) {
         val active = sourceSession ?: return
+        report.control(success, "$action: $message")
         send("source.controlResult", JSONObject().put("session", active).put("action", action)
             .put("success", success).put("message", message.take(160)))
     }
@@ -310,6 +311,7 @@ class ProtocolClient(
     fun beginPhoneShare(context: Context, resultCode: Int, data: Intent, width: Int, height: Int, audio: Boolean) {
         require(width in 2..1920 && height in 2..1920 && width * height <= 1920 * 1080)
         sourceContext = context.applicationContext
+        report.phoneStart()
         projectionRequest = ProjectionRequest(context.applicationContext, resultCode, data, width, height, audio)
         PhoneSourceBus.sink = object : PhoneSourceBus.Sink {
             override fun video(bytes: ByteArray) = sendSourceMedia("source.frame", 3, bytes,

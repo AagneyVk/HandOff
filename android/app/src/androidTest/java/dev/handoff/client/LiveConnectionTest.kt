@@ -13,6 +13,36 @@ import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(AndroidJUnit4::class)
 class LiveConnectionTest {
+    @Test fun accessibilityServiceInjectsARealTouch() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        fun shell(command: String) = instrumentation.uiAutomation.executeShellCommand(command).use {
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes()
+        }
+        val component = "${instrumentation.targetContext.packageName}/${RemoteControlService::class.java.name}"
+        ControlTargetActivity.touch = CountDownLatch(1)
+        try {
+            shell("settings put secure enabled_accessibility_services $component")
+            shell("settings put secure accessibility_enabled 1")
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8)
+            while (!RemoteControlService.enabled() && System.nanoTime() < deadline) Thread.sleep(50)
+            assertTrue("HandOff Accessibility service did not connect", RemoteControlService.enabled())
+            instrumentation.targetContext.startActivity(
+                android.content.Intent(instrumentation.targetContext, ControlTargetActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            Thread.sleep(600)
+            val result = CountDownLatch(1)
+            val success = java.util.concurrent.atomic.AtomicBoolean(false)
+            RemoteControlService.tap(.5f, .5f) { ok, _ -> success.set(ok); result.countDown() }
+            assertTrue("Accessibility gesture result timed out", result.await(5, TimeUnit.SECONDS))
+            assertTrue("Android rejected the HandOff gesture", success.get())
+            assertTrue("Target app did not receive the injected touch", ControlTargetActivity.touch!!.await(3, TimeUnit.SECONDS))
+        } finally {
+            shell("settings delete secure enabled_accessibility_services")
+            shell("settings put secure accessibility_enabled 0")
+            ControlTargetActivity.touch = null
+        }
+    }
+
     @Test fun phoneControlServiceIsDiscoverableAndProtected() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val component = android.content.ComponentName(context, RemoteControlService::class.java)

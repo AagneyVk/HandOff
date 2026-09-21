@@ -102,6 +102,7 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
     var controlInstalled by remember { mutableStateOf(RemoteControlService.installed(context)) }
     var controlEnabledInSettings by remember { mutableStateOf(RemoteControlService.enabledInSettings(context)) }
     var showControlHelp by remember { mutableStateOf(false) }
+    var shareAfterControl by remember { mutableStateOf(false) }
     var controlsExpanded by remember { mutableStateOf(true) }
     var showKeyboardControls by remember { mutableStateOf(false) }
     val client = remember {
@@ -230,6 +231,15 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
     val audioPermission = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) requestProjection()
         else { projectionPending = false; activity.keepProjectionConnection(false); status = "Audio permission denied; turn phone audio off to share video only" }
+    }
+    LaunchedEffect(controlEnabled, shareAfterControl) {
+        if (shareAfterControl && controlEnabled) {
+            shareAfterControl = false
+            if (phoneAudio && androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                activity.keepProjectionConnection(true)
+                audioPermission.launch(Manifest.permission.RECORD_AUDIO)
+            } else requestProjection()
+        }
     }
     BackHandler(live) { if (showKeyboardControls) showKeyboardControls = false else client.stop() }
     val dark = androidx.compose.foundation.isSystemInDarkTheme()
@@ -371,12 +381,21 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                                     }
                                     TextButton(onClick = { showControlHelp = true }) { Text("Show exact control setup") }
                                     if (phoneSharing) Button(onClick = { PhoneProjectionService.stop(context) }, modifier = Modifier.fillMaxWidth()) { Text("Return to phone") }
-                                    else Button(onClick = {
-                                        if (phoneAudio && androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
-                                            { activity.keepProjectionConnection(true); audioPermission.launch(Manifest.permission.RECORD_AUDIO) }
-                                        else requestProjection()
-                                    }, enabled = !projectionPending && !live, modifier = Modifier.fillMaxWidth()) {
-                                        Text(if (projectionPending) "Waiting for Android…" else "Share phone to computer")
+                                    else {
+                                        Button(onClick = {
+                                            if (!controlEnabled) {
+                                                shareAfterControl = true
+                                                status = "Enable HandOff phone control; sharing will continue when you return"
+                                                openControlSettings()
+                                            } else if (phoneAudio && androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+                                                { activity.keepProjectionConnection(true); audioPermission.launch(Manifest.permission.RECORD_AUDIO) }
+                                            else requestProjection()
+                                        }, enabled = !projectionPending && !live, modifier = Modifier.fillMaxWidth()) {
+                                            Text(if (projectionPending) "Waiting for Android…" else if (controlEnabled) "Share and control phone" else "Enable control & share phone")
+                                        }
+                                        if (!controlEnabled) TextButton(onClick = { requestProjection() }, modifier = Modifier.fillMaxWidth()) {
+                                            Text("Share view only")
+                                        }
                                     }
                                 }
                             }
@@ -413,7 +432,9 @@ private fun HandOffApp(activity: MainActivity, bindBackground: ((() -> Unit)?) -
                     }
                     item { UpdateCard(activity) }
                     item {
-                        TextButton(onClick = { export.launch("handoff-session.json") }, enabled = client.report().optInt("decoded_frames") > 0) { Text("Export session report") }
+                        TextButton(onClick = { export.launch("handoff-session.json") }, enabled = client.report().let {
+                            it.optInt("decoded_frames") + it.optInt("phone_controls_delivered") + it.optInt("phone_controls_failed") > 0
+                        }) { Text("Export session report") }
                         Text("Private by design", style = MaterialTheme.typography.titleMedium)
                         Text("Pair directly with your computer. Only the app or display you explicitly choose is shared over your local network. Stop sharing on either device at any time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(24.dp))
