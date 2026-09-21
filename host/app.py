@@ -15,6 +15,7 @@ from tkinter import ttk, messagebox
 from .runtime.security import Identity, TrustStore
 from .runtime.server import Host
 from .runtime.phone_view import PhonePresenter
+from .runtime.nat import DirectAccess
 
 PORT = 47821
 
@@ -56,8 +57,11 @@ class Desktop:
         directory = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.local' / 'share')) / 'HandOff'
         self.identity = Identity(directory)
         self.trust = TrustStore(directory)
+        self.direct = DirectAccess(PORT)
+        self.direct.start()
         catalog, identify, tap, scroll, drag, text, key = backends()
         self.host = Host(self.trust, catalog, identify, tap, scroll, drag=drag, text=text, key=key)
+        self.host.direct_endpoint = lambda: self.direct.snapshot()[0]
         self.phone = PhonePresenter(root, self.phone_control)
         self.host.phone_presenter = self.phone
         self.loop = None
@@ -104,6 +108,8 @@ class Desktop:
         ttk.Button(right, text='Copy pairing link', command=self.copy).pack(fill='x')
         self.pair_status = tk.StringVar(value='Codes expire after 5 minutes and work once.')
         ttk.Label(right, textvariable=self.pair_status, wraplength=270).pack(pady=8)
+        self.direct_status = tk.StringVar(value='Checking direct Internet access…')
+        ttk.Label(right, textvariable=self.direct_status, wraplength=270).pack(pady=(0, 8))
         self.audio_choice = tk.BooleanVar(value=False)
         ttk.Checkbutton(main, text='Share computer audio (all apps, never microphone)', variable=self.audio_choice,
                         command=lambda: setattr(self.host, 'audio_enabled', self.audio_choice.get())).pack(anchor='w')
@@ -184,7 +190,10 @@ class Desktop:
             return messagebox.showerror('Computer address', 'Enter the LAN IPv4 address of this computer.')
         import qrcode
         from PIL import ImageTk
-        self.invitation = self.trust.invitation(address, PORT, self.identity.fingerprint)
+        mapping, _ = self.direct.snapshot()
+        self.invitation = self.trust.invitation(address, PORT, self.identity.fingerprint,
+                                                mapping.host if mapping else None,
+                                                mapping.external_port if mapping else None)
         image = qrcode.make(self.invitation, box_size=3, border=4, error_correction=qrcode.constants.ERROR_CORRECT_L).get_image()
         self.photo = ImageTk.PhotoImage(image)
         self.qr.configure(image=self.photo, text='')
@@ -229,12 +238,15 @@ class Desktop:
             self.qr.configure(image='', text='Code used or expired.\nGenerate a new code to pair.')
             self.invitation = ''
         self.pair_status.set(f'Code expires in {remaining}s' if remaining else 'Codes expire after 5 minutes and work once.')
+        _, direct_status = self.direct.snapshot()
+        self.direct_status.set(direct_status)
         self.root.after(500, self.poll)
 
     def close(self):
         self.shutting_down = True
         self.host.stop()
         self.phone.stop()
+        self.direct.stop()
         if self.loop and self.server_task:
             with contextlib.suppress(RuntimeError): self.loop.call_soon_threadsafe(self.server_task.cancel)
         self.thread.join(timeout=2)

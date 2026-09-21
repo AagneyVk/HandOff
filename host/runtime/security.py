@@ -62,11 +62,14 @@ class TrustStore:
         self.invite = None
         self.expires = 0
 
-    def invitation(self, host, port, fingerprint):
+    def invitation(self, host, port, fingerprint, wan_host=None, wan_port=None):
         with self.lock:
             self.invite = secrets.token_urlsafe(32)
             self.expires = time.monotonic() + 300
-            return 'handoff://pair?' + urlencode(dict(host=host, port=port, pin=fingerprint, code=self.invite))
+            values = dict(host=host, port=port, pin=fingerprint, code=self.invite)
+            if wan_host and wan_port:
+                values.update(wan=wan_host, wan_port=wan_port)
+            return 'handoff://pair?' + urlencode(values)
 
     def pair(self, code, name):
         with self.lock:

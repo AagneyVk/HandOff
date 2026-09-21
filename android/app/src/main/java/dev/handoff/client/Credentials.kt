@@ -11,7 +11,15 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-data class Credentials(val host: String, val port: Int, val pin: String, val device: String, val token: String)
+data class Credentials(
+    val host: String,
+    val port: Int,
+    val pin: String,
+    val device: String,
+    val token: String,
+    val wanHost: String? = null,
+    val wanPort: Int? = null,
+)
 
 class CredentialStore(context: Context) {
     private val prefs = context.getSharedPreferences("paired-computer", Context.MODE_PRIVATE)
@@ -24,9 +32,11 @@ class CredentialStore(context: Context) {
         }.generateKey()
     }
     fun save(c: Credentials) {
-        val data = JSONObject().put("host", c.host).put("port", c.port).put("pin", c.pin).put("device", c.device).put("token", c.token).toString().toByteArray()
+        val data = JSONObject().put("host", c.host).put("port", c.port).put("pin", c.pin).put("device", c.device).put("token", c.token)
+        c.wanHost?.let { data.put("wan", it) }
+        c.wanPort?.let { data.put("wan_port", it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
-        val ciphertext = cipher.doFinal(data)
+        val ciphertext = cipher.doFinal(data.toString().toByteArray(Charsets.UTF_8))
         check(prefs.edit().putString("value", Base64.encodeToString(cipher.iv + ciphertext, Base64.NO_WRAP)).commit()) { "Could not save pairing" }
     }
     fun load(): Credentials? = try {
@@ -34,7 +44,8 @@ class CredentialStore(context: Context) {
             val bytes = Base64.decode(it, Base64.NO_WRAP)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12))) }
             val obj = JSONObject(String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8))
-            Credentials(obj.getString("host"), obj.getInt("port"), obj.getString("pin"), obj.getString("device"), obj.getString("token"))
+            Credentials(obj.getString("host"), obj.getInt("port"), obj.getString("pin"), obj.getString("device"), obj.getString("token"),
+                obj.optString("wan").takeIf { it.isNotBlank() }, obj.optInt("wan_port").takeIf { it in 1..65535 })
         }
     } catch (_: Exception) { clear(); null }
     fun clear() { prefs.edit().clear().apply() }

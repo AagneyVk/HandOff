@@ -25,6 +25,7 @@ class Host:
         self.owner = None
         self.phone_owner = None
         self.phone_presenter = None
+        self.direct_endpoint = lambda: None
         self.connections = 0
         self.status = 'Choose an app or display to share'
 
@@ -90,16 +91,18 @@ class Connection:
 
     async def run(self):
         first = await wire.read(self.reader, 10)
+        mapping = self.host.direct_endpoint()
+        route = dict(wan=mapping.host, wan_port=mapping.external_port) if mapping else {}
         if first['type'] == 'pair':
             try:
                 self.device, token = self.host.trust.pair(first.get('code'), first.get('name', 'Android'))
             except ValueError as exc:
                 await self.send('error', message=str(exc))
                 return
-            await self.send('paired', device=self.device, token=token)
+            await self.send('paired', device=self.device, token=token, **route)
         elif first['type'] == 'auth' and self.host.trust.authenticate(first.get('device'), first.get('token')):
             self.device = first['device']
-            await self.send('ready', name=socket.gethostname())
+            await self.send('ready', name=socket.gethostname(), **route)
         else:
             await self.send('revoked' if first['type'] == 'auth' else 'error', message='Pair this phone again from your computer.')
             return

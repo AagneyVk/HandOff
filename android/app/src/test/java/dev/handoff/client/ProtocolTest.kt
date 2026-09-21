@@ -38,8 +38,11 @@ class ProtocolTest {
         catch (_: IllegalArgumentException) { }
     }
     @Test fun pairingRequiresPinAndUniqueFields() {
-        val link = "handoff://pair?host=192.168.1.2&port=47821&pin=${"a".repeat(64)}&code=${"b".repeat(43)}"
-        assertEquals("192.168.1.2", Pairing.parse(link).host)
+        val link = "handoff://pair?host=192.168.1.2&port=47821&pin=${"a".repeat(64)}&code=${"b".repeat(43)}&wan=203.0.113.8&wan_port=54321"
+        val pairing = Pairing.parse(link)
+        assertEquals("192.168.1.2", pairing.host)
+        assertEquals("203.0.113.8", pairing.wanHost)
+        assertEquals(54321, pairing.wanPort)
         for (bad in listOf(link + "&host=evil", link.replace("handoff:", "http:"), link.replace("a".repeat(64), "abc"))) {
             try { Pairing.parse(bad); fail("Invalid pairing accepted") }
             catch (_: IllegalArgumentException) { }

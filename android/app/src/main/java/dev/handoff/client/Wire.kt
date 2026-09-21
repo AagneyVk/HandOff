@@ -29,7 +29,8 @@ object Wire {
     }
 }
 
-data class Pairing(val host: String, val port: Int, val pin: String, val code: String) {
+data class Pairing(val host: String, val port: Int, val pin: String, val code: String,
+    val wanHost: String? = null, val wanPort: Int? = null) {
     companion object {
         fun parse(value: String): Pairing {
             require(value.length <= 2048) { "Pairing link is too long" }
@@ -50,7 +51,10 @@ data class Pairing(val host: String, val port: Int, val pin: String, val code: S
             require(pin.matches(Regex("[0-9a-f]{64}"))) { "Invalid computer identity" }
             val code = values["code"] ?: ""
             require(code.matches(Regex("[A-Za-z0-9_-]{43}"))) { "Invalid pairing code" }
-            return Pairing(host, port, pin, code)
+            val wanHost = values["wan"]?.also { require(it.matches(Regex("[A-Za-z0-9.:_-]{1,253}"))) { "Invalid direct address" } }
+            val wanPort = values["wan_port"]?.toIntOrNull()
+            require((wanHost == null) == (wanPort == null) && (wanPort == null || wanPort in 1..65535)) { "Invalid direct endpoint" }
+            return Pairing(host, port, pin, code, wanHost, wanPort)
         }
     }
 }

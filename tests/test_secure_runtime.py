@@ -5,6 +5,7 @@ import ssl
 import struct
 import tempfile
 import unittest
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import Mock, patch
 
@@ -21,8 +22,11 @@ class SecurityTests(unittest.TestCase):
             identity = Identity(folder)
             self.assertEqual(identity.fingerprint, Identity(folder).fingerprint)
             store = TrustStore(folder)
-            link = store.invitation('127.0.0.1', 47821, identity.fingerprint)
-            code = parse_qs(urlparse(link).query)['code'][0]
+            link = store.invitation('127.0.0.1', 47821, identity.fingerprint, '203.0.113.8', 54321)
+            values = parse_qs(urlparse(link).query)
+            code = values['code'][0]
+            self.assertEqual(values['wan'], ['203.0.113.8'])
+            self.assertEqual(values['wan_port'], ['54321'])
             device, token = store.pair(code, 'Phone')
             self.assertTrue(TrustStore(folder).authenticate(device, token))
             self.assertFalse(store.authenticate(device, 'wrong'))
@@ -157,9 +161,12 @@ class SecureRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_reconnect_with_credential(self):
         paired = await self.pair()
         self.writer.close(); await self.writer.wait_closed()
+        self.host.direct_endpoint = lambda: SimpleNamespace(host='198.51.100.9', external_port=54321)
         self.reader, self.writer = await self.connect()
         await self.send('auth', device=paired['device'], token=paired['token'])
-        self.assertEqual((await self.receive())['type'], 'ready')
+        ready = await self.receive()
+        self.assertEqual(ready['type'], 'ready')
+        self.assertEqual((ready['wan'], ready['wan_port']), ('198.51.100.9', 54321))
 
     async def test_oversize_packet_closes_without_allocating_payload(self):
         self.writer.write(struct.pack('!I', 0x7FFFFFFF)); await self.writer.drain()

@@ -13,6 +13,7 @@ import org.json.JSONObject
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetSocketAddress
+import java.io.IOException
 import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
@@ -70,28 +71,52 @@ class ProtocolClient(
     init { heartbeat.scheduleAtFixedRate({ if (writer != null) send("ping") }, 8, 8, TimeUnit.SECONDS) }
     private fun state(epoch: Long, value: String) { main.post { if (generation.get() == epoch && !disposed) onState(value) } }
 
-    fun pair(pairing: Pairing) = connect(pairing.host, pairing.port, pairing.pin,
+    private data class Endpoint(val host: String, val port: Int)
+    fun pair(pairing: Pairing) = connect(pairing.host, pairing.port, pairing.wanHost, pairing.wanPort, pairing.pin,
         JSONObject().put("type", "pair").put("code", pairing.code).put("name", android.os.Build.MODEL))
-    fun reconnect(c: Credentials) = connect(c.host, c.port, c.pin,
+    fun reconnect(c: Credentials) = connect(c.host, c.port, c.wanHost, c.wanPort, c.pin,
         JSONObject().put("type", "auth").put("device", c.device).put("token", c.token))
 
-    private fun connect(host: String, port: Int, pin: String, auth: JSONObject) {
+    private fun connect(host: String, port: Int, wanHost: String?, wanPort: Int?, pin: String, auth: JSONObject) {
         close()
         if (disposed) return
         val epoch = generation.get()
-        val raw = Socket()
-        socket = raw
+        val endpoints = buildList {
+            add(Endpoint(host, port))
+            if (wanHost != null && wanPort != null) add(Endpoint(wanHost, wanPort))
+        }.distinct()
         state(epoch, "Connecting securely…")
         thread(name = "handoff-reader", isDaemon = true) {
             var decoder: VideoDecoder? = null
             var player: AudioPlayer? = null
             var decoderSize: Pair<Int, Int>? = null
+            var raw: Socket? = null
             try {
-                raw.connect(InetSocketAddress(host, port), 5000)
-                raw.tcpNoDelay = true
-                raw.soTimeout = 10000
+                var connected: Endpoint? = null
+                var lastFailure: Exception? = null
+                for (endpoint in endpoints) {
+                    if (generation.get() != epoch) return@thread
+                    val trial = Socket()
+                    socket = trial
+                    try {
+                        val timeout = if (endpoints.size > 1 && endpoint == endpoints.first()) 900 else 3500
+                        trial.connect(InetSocketAddress(endpoint.host, endpoint.port), timeout)
+                        raw = trial
+                        connected = endpoint
+                        break
+                    } catch (exc: Exception) {
+                        lastFailure = exc
+                        try { trial.close() } catch (_: Exception) { }
+                    }
+                }
+                val route = connected ?: throw IOException(
+                    if (endpoints.size > 1) "Could not reach this computer on LAN or direct Internet. ${lastFailure?.message ?: ""}".trim()
+                    else "Could not reach this computer. ${lastFailure?.message ?: ""}".trim())
+                val activeSocket = raw ?: error("Connection socket unavailable")
+                activeSocket.tcpNoDelay = true
+                activeSocket.soTimeout = 10000
                 val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf(PinnedTrust(pin)), null) }
-                val tls = context.socketFactory.createSocket(raw, host, port, true) as SSLSocket
+                val tls = context.socketFactory.createSocket(activeSocket, route.host, route.port, true) as SSLSocket
                 tls.enabledProtocols = tls.supportedProtocols.filter { it == "TLSv1.2" || it == "TLSv1.3" }.toTypedArray()
                 tls.soTimeout = 10000
                 tls.tcpNoDelay = true
@@ -102,9 +127,13 @@ class ProtocolClient(
                 val first = readJson(input)
                 synchronized(this) {
                     if (generation.get() != epoch) return@thread
+                val advertisedHost = first.optString("wan").takeIf { it.matches(Regex("[A-Za-z0-9.:_-]{1,253}")) }
+                val advertisedPort = first.optInt("wan_port").takeIf { it in 1..65535 }
+                val savedWanHost = if (advertisedHost != null && advertisedPort != null) advertisedHost else wanHost
+                val savedWanPort = if (advertisedHost != null && advertisedPort != null) advertisedPort else wanPort
                 when (first.getString("type")) {
-                    "paired" -> store.save(Credentials(host, port, pin, first.getString("device"), first.getString("token")))
-                    "ready" -> Unit
+                    "paired" -> store.save(Credentials(host, port, pin, first.getString("device"), first.getString("token"), savedWanHost, savedWanPort))
+                    "ready" -> store.save(Credentials(host, port, pin, auth.getString("device"), auth.getString("token"), savedWanHost, savedWanPort))
                     "revoked" -> { store.clear(); error(first.optString("message", "Pair again on your computer")) }
                     else -> error(first.optString("message", "Pairing failed"))
                 }
@@ -250,7 +279,7 @@ class ProtocolClient(
             } finally {
                 try { decoder?.close() } catch (_: Exception) {}
                 try { player?.close() } catch (_: Exception) {}
-                try { raw.close() } catch (_: Exception) { }
+                try { raw?.close() } catch (_: Exception) { }
                 synchronized(this) {
                     if (generation.get() == epoch) {
                         sourceContext?.let { if (sourceSession != null) PhoneProjectionService.stop(it) }

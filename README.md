@@ -1,13 +1,13 @@
 # HandOff
 
-Continue a running app or display in either direction between Android and your computer over the local network. The source device keeps running it; HandOff carries live pixels, permitted playback audio and scoped control through one pinned-TLS connection.
+Continue a running app or display in either direction between Android and your computer. The source device keeps running it; HandOff carries live pixels, permitted playback audio and scoped control through one pinned-TLS connection. It prefers the local network and can connect directly over the Internet when the computer's router supports automatic port mapping.
 
 ## Get started
 
 1. Open **Actions → Framework tests** and choose a successful run on `v1`.
 2. Download **HandOff-Windows**, extract it fully, and launch `HandOff.exe`. Keep the `_internal` folder beside it.
 3. Download **handoff-v1-debug-apk**, extract it, and install the APK on Android 8 or newer.
-4. Put both devices on the same private network. Allow HandOff on **private networks** if Windows Firewall asks.
+4. For first pairing, put both devices on the same private network. Allow HandOff on **private networks** if Windows Firewall asks. The desktop will show whether zero-cost direct Internet access is available through your router.
 5. In desktop HandOff, select an app or **Entire display** and click **Share selected**.
 6. Choose the computer's LAN address and click **New pairing code**. In Android HandOff, tap **Pair with QR code** and scan it.
 7. Pick Smooth, Balanced or Sharp and tap **Continue here**. Tap to click, use Scroll mode for reels/documents, or Drag mode for sliders and direct manipulation. Windows also supports sending text and Enter from the phone. Keep an app-only target foreground to allow input.
@@ -32,11 +32,12 @@ The code expires after five minutes and works once. Afterwards, the phone can re
 - Explicit Android Accessibility control for desktop tap, drag, wheel scrolling, text, Back, Home, Enter and editing actions. It is never enabled or invoked merely by pairing.
 - Optional Android 10+ media/game playback capture to the computer. Apps can opt out and protected/DRM content can remain silent or black.
 - Return, disconnect, closed-window/capture error handling, and automatic disconnect when Android goes into the background.
+- LAN-first reconnect with a second, automatically mapped direct-Internet candidate. The mapping exists only while HandOff runs and carries the same pinned-TLS protocol; no screen, audio or input is sent through a cloud relay.
 - Windows executable and Android debug APK build artifacts.
 
 ## Current release scope
 
-This is **RC4**. Both directions are implemented, but physical GPU/audio/device compatibility must still be measured on your own hardware. CI validates the encrypted media protocols, H.264 encode/decode plumbing, native desktop capture/input, Android build/lint and lifecycle behavior that can run without bypassing Android's mandatory projection/accessibility consent. Per-app desktop audio isolation, tightly synchronized A/V, file drag-and-drop and native Wayland remain outside this build. Linux remote text entry is not advertised because portable Unicode injection is not reliable across X11 keyboard maps.
+This is **RC11**. Both directions are implemented, but physical GPU/audio/device and router compatibility must still be measured on your own hardware. CI validates the encrypted media protocols, H.264 encode/decode plumbing, native desktop capture/input, Android build/lint and lifecycle behavior that can run without bypassing Android's mandatory projection/accessibility consent. Direct Internet mode works only where the computer's router provides UPnP and a genuine public IPv4 address. CGNAT, symmetric NAT, disabled UPnP and restrictive firewalls require a relay or VPN, which this zero-cost direct-only mode deliberately does not hide. Per-app desktop audio isolation, tightly synchronized A/V, file drag-and-drop and native Wayland remain outside this build. Linux remote text entry is not advertised because portable Unicode injection is not reliable across X11 keyboard maps.
 
 See [media, physical validation and signing](docs/RELEASE.md). The signed-release workflow is ready but requires your publisher credentials and physical session evidence. Ordinary CI artifacts are still debug-signed Android and unsigned Windows.
 
@@ -55,7 +56,7 @@ Arch Linux: use an X11 session; install `python`, `tk`, `libxcomposite` and a wo
 bash start-linux.sh
 ```
 
-Other Linux distributions also need Python venv/Tk support. Native Wayland is rejected explicitly. The host uses TCP **47821**; no router port-forwarding is needed. If an address changes, generate a fresh pairing code. There is no cloud relay or paid API.
+Other Linux distributions also need Python venv/Tk support. Native Wayland is rejected explicitly. The host uses TCP **47821** internally. It requests a temporary UPnP mapping automatically and removes it at shutdown; no manual router setup is needed on compatible networks. If the desktop's public address changes, generate and scan a fresh pairing code. There is no cloud relay, account or paid API.
 
 Android development: open `android` in Android Studio with JDK 17 and Android SDK 35, or run installed Gradle 8.10.2:
 
