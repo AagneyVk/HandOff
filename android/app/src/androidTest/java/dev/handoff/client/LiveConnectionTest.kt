@@ -15,7 +15,11 @@ import java.util.concurrent.atomic.AtomicReference
 class LiveConnectionTest {
     @Test fun accessibilityServiceInjectsARealTouch() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        fun shell(command: String) = instrumentation.uiAutomation.executeShellCommand(command).use {
+        // The default UiAutomation suppresses every regular AccessibilityService while a test
+        // is attached. Keep services alive so this test exercises HandOff's real binder/gesture.
+        val automation = instrumentation.getUiAutomation(
+            android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+        fun shell(command: String) = automation.executeShellCommand(command).use {
             android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes().toString(Charsets.UTF_8)
         }
         val component = "${instrumentation.targetContext.packageName}/${RemoteControlService::class.java.name}"
